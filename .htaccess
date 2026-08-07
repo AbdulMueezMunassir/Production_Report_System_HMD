@@ -1,0 +1,17 @@
+# .htaccess - Fix permissions
+Options -Indexes
+DirectoryIndex index.php
+
+<FilesMatch "\.(php|inc)$">
+    Order Allow,Deny
+    Allow from all
+</FilesMatch>
+
+<FilesMatch "^(config|includes)">
+    Order Deny,Allow
+    Deny from all
+</FilesMatch>
+
+# Enable error reporting for debugging
+php_flag display_errors on
+php_value error_reporting 2047
