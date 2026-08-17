@@ -249,4 +249,12 @@ body {
 .table-glass tr:hover {
     background: rgba(255, 255, 255, 0.05);
 }
+
+.topbar .logo-mark img { 
+    height: 32px; 
+    width: auto;
+    display: block;
+    image-rendering: auto;
+    -ms-interpolation-mode: bicubic;
+}
 }

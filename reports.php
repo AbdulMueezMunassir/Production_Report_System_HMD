@@ -1,5 +1,5 @@
 <?php
-// reports.php - Reports Page with Glass Morphism & Logo
+// reports.php - Reports Page with Smaller Logo
 require_once 'config/database.php';
 require_once 'includes/auth.php';
 require_once 'includes/functions.php';
@@ -102,6 +102,7 @@ $total_divisions = count($division_stats);
     <title>Reports - Hameedia</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
+        /* Same styles as dashboard but with logo size adjusted */
         * { margin: 0; padding: 0; box-sizing: border-box; }
         :root {
             --primary: #217346;
@@ -162,7 +163,7 @@ $total_divisions = count($division_stats);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
             border-bottom: 1px solid var(--glass-border);
-            padding: 12px 30px;
+            padding: 10px 30px;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -170,30 +171,21 @@ $total_divisions = count($division_stats);
             gap: 10px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.05);
         }
-        .topbar .logo-mark { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 20px; color: var(--primary-dark); }
-        .topbar .logo-mark img { height: 40px; width: auto; display: block; }
-        .topnav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-        .topnav a {
-            color: var(--steel);
-            text-decoration: none;
-            font-size: 15px;
-            font-weight: 600;
-            padding: 8px 18px;
-            border-radius: 10px;
-            transition: all 0.3s;
-            background: transparent;
-        }
+        .topbar .logo-mark { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: var(--primary-dark); }
+        .topbar .logo-mark img { height: 30px; width: auto; display: block; image-rendering: auto; -ms-interpolation-mode: bicubic; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1)); }
+        .topnav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .topnav a { color: var(--steel); text-decoration: none; font-size: 14px; font-weight: 600; padding: 7px 16px; border-radius: 10px; transition: all 0.3s; background: transparent; }
         .topnav a:hover { color: var(--primary); background: rgba(33, 115, 70, 0.08); }
         .topnav a.active { color: #fff; background: var(--primary); box-shadow: 0 4px 15px rgba(33, 115, 70, 0.3); }
-        .right { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 14px; color: var(--steel); }
-        .live-chip { display: flex; align-items: center; gap: 6px; background: rgba(33, 115, 70, 0.1); padding: 4px 14px; border-radius: 20px; font-size: 13px; color: var(--primary); font-weight: 600; }
-        .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); animation: blink 1.5s infinite; }
+        .right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--steel); }
+        .live-chip { display: flex; align-items: center; gap: 6px; background: rgba(33, 115, 70, 0.1); padding: 4px 12px; border-radius: 20px; font-size: 12px; color: var(--primary); font-weight: 600; }
+        .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--good); animation: blink 1.5s infinite; }
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-        .logout { color: var(--steel); text-decoration: none; padding: 6px 16px; border-radius: 8px; transition: all 0.3s; background: rgba(255,255,255,0.5); font-weight: 600; }
+        .logout { color: var(--steel); text-decoration: none; padding: 5px 14px; border-radius: 8px; transition: all 0.3s; background: rgba(255,255,255,0.5); font-weight: 600; font-size: 13px; }
         .logout:hover { background: rgba(220, 53, 69, 0.1); color: var(--bad); }
-        .date-display { color: var(--text-dark); font-size: 14px; font-weight: 600; }
-        .user-name { color: var(--text-dark); font-weight: 600; font-size: 14px; }
-        .admin-badge { font-size: 10px; background: var(--primary); color: #fff; padding: 2px 10px; border-radius: 10px; font-weight: 600; }
+        .date-display { color: var(--text-dark); font-size: 13px; font-weight: 600; }
+        .user-name { color: var(--text-dark); font-weight: 600; font-size: 13px; }
+        .admin-badge { font-size: 9px; background: var(--primary); color: #fff; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
 
         .wrap { position: relative; z-index: 5; max-width: 1400px; margin: 0 auto; padding: 30px; }
         
@@ -260,10 +252,7 @@ $total_divisions = count($division_stats);
             text-align: center;
             transition: all 0.3s ease;
         }
-        .kpi-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 12px 40px rgba(0,0,0,0.1);
-        }
+        .kpi-card:hover { transform: translateY(-4px); box-shadow: 0 12px 40px rgba(0,0,0,0.1); }
         .kpi-card .number { font-size: 30px; font-weight: 900; color: var(--primary); }
         .kpi-card .label { font-size: 13px; font-weight: 600; color: var(--steel); margin-top: 4px; }
         
@@ -315,7 +304,7 @@ $total_divisions = count($division_stats);
         .no-data { text-align: center; padding: 40px; color: var(--steel); font-weight: 500; }
         
         @media (max-width: 768px) {
-            .topbar { padding: 12px 16px; flex-direction: column; align-items: stretch; gap: 10px; }
+            .topbar { padding: 10px 16px; flex-direction: column; align-items: stretch; gap: 8px; }
             .topnav { justify-content: center; }
             .right { justify-content: center; }
             .wrap { padding: 16px; }
@@ -323,11 +312,9 @@ $total_divisions = count($division_stats);
             .filter-row input, .filter-row select { min-width: unset; }
             .kpi-row { grid-template-columns: 1fr 1fr; }
             .topnav a { padding: 6px 12px; font-size: 13px; }
-            .topbar .logo-mark img { height: 30px; }
+            .topbar .logo-mark img { height: 26px; }
         }
-        @media (max-width: 480px) {
-            .kpi-row { grid-template-columns: 1fr; }
-        }
+        @media (max-width: 480px) { .kpi-row { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
@@ -471,13 +458,11 @@ $total_divisions = count($division_stats);
             const xScale = chartWidth / (labels.length - 1 || 1);
             const yScale = chartHeight / (maxEff - minEff);
 
-            let path = '';
             let points = '';
 
             values.forEach((val, i) => {
                 const x = padding.left + i * xScale;
                 const y = padding.top + chartHeight - (val - minEff) * yScale;
-                if (i === 0) { path = `M ${x} ${y}`; } else { path += ` L ${x} ${y}`; }
                 points += `${x},${y} `;
             });
 

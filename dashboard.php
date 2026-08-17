@@ -1,5 +1,5 @@
 <?php
-// dashboard.php - Complete Dashboard with Glass Morphism & Logo
+// dashboard.php - Complete Dashboard with Glass Morphism
 require_once 'config/database.php';
 require_once 'includes/auth.php';
 require_once 'includes/functions.php';
@@ -56,7 +56,6 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             position: relative;
         }
         
-        /* Background animated shapes */
         .bg-shapes {
             position: fixed;
             top: 0;
@@ -73,31 +72,9 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             opacity: 0.08;
             animation: float 25s infinite ease-in-out;
         }
-        .shape-1 {
-            width: 500px;
-            height: 500px;
-            background: var(--primary);
-            top: -150px;
-            right: -150px;
-            animation-delay: 0s;
-        }
-        .shape-2 {
-            width: 300px;
-            height: 300px;
-            background: var(--primary);
-            bottom: -100px;
-            left: -100px;
-            animation-delay: -8s;
-        }
-        .shape-3 {
-            width: 200px;
-            height: 200px;
-            background: var(--primary);
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            animation-delay: -15s;
-        }
+        .shape-1 { width: 500px; height: 500px; background: var(--primary); top: -150px; right: -150px; }
+        .shape-2 { width: 300px; height: 300px; background: var(--primary); bottom: -100px; left: -100px; animation-delay: -8s; }
+        .shape-3 { width: 200px; height: 200px; background: var(--primary); top: 50%; left: 50%; transform: translate(-50%, -50%); animation-delay: -15s; }
         @keyframes float {
             0%, 100% { transform: translate(0, 0) scale(1); }
             25% { transform: translate(60px, -60px) scale(1.1); }
@@ -105,7 +82,6 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             75% { transform: translate(30px, 30px) scale(1.05); }
         }
         
-        /* Top Bar - Glass */
         .topbar {
             position: relative;
             z-index: 10;
@@ -113,7 +89,7 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
             border-bottom: 1px solid var(--glass-border);
-            padding: 12px 30px;
+            padding: 10px 30px;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -124,33 +100,36 @@ $factory_eff = getFactoryEfficiency($conn, $date);
         .topbar .logo-mark { 
             display: flex; 
             align-items: center; 
-            gap: 12px; 
+            gap: 10px; 
             font-weight: 700; 
-            font-size: 20px; 
+            font-size: 18px; 
             color: var(--primary-dark);
         }
         .topbar .logo-mark img { 
-            height: 40px; 
+            height: 30px; 
             width: auto;
             display: block;
+            image-rendering: auto;
+            -ms-interpolation-mode: bicubic;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
         }
         .topbar .logo-mark span { 
-            font-size: 20px;
+            font-size: 18px;
             font-weight: 800;
             color: var(--text-dark);
         }
         .topnav { 
             display: flex; 
             align-items: center; 
-            gap: 8px; 
+            gap: 6px; 
             flex-wrap: wrap; 
         }
         .topnav a {
             color: var(--steel);
             text-decoration: none;
-            font-size: 15px;
+            font-size: 14px;
             font-weight: 600;
-            padding: 8px 18px;
+            padding: 7px 16px;
             border-radius: 10px;
             transition: all 0.3s;
             background: transparent;
@@ -167,9 +146,9 @@ $factory_eff = getFactoryEfficiency($conn, $date);
         .right { 
             display: flex; 
             align-items: center; 
-            gap: 16px; 
+            gap: 12px; 
             flex-wrap: wrap; 
-            font-size: 14px; 
+            font-size: 13px; 
             color: var(--steel); 
         }
         .live-chip { 
@@ -177,15 +156,15 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             align-items: center; 
             gap: 6px; 
             background: rgba(33, 115, 70, 0.1); 
-            padding: 4px 14px; 
+            padding: 4px 12px; 
             border-radius: 20px; 
-            font-size: 13px; 
+            font-size: 12px; 
             color: var(--primary); 
             font-weight: 600; 
         }
         .live-dot { 
-            width: 8px; 
-            height: 8px; 
+            width: 6px; 
+            height: 6px; 
             border-radius: 50%; 
             background: var(--good); 
             animation: blink 1.5s infinite; 
@@ -197,11 +176,12 @@ $factory_eff = getFactoryEfficiency($conn, $date);
         .logout { 
             color: var(--steel); 
             text-decoration: none; 
-            padding: 6px 16px; 
+            padding: 5px 14px; 
             border-radius: 8px; 
             transition: all 0.3s; 
             background: rgba(255,255,255,0.5);
             font-weight: 600;
+            font-size: 13px;
         }
         .logout:hover { 
             background: rgba(220, 53, 69, 0.1); 
@@ -209,19 +189,19 @@ $factory_eff = getFactoryEfficiency($conn, $date);
         }
         .date-display { 
             color: var(--text-dark); 
-            font-size: 14px; 
+            font-size: 13px; 
             font-weight: 600;
         }
         .user-name {
             color: var(--text-dark);
             font-weight: 600;
-            font-size: 14px;
+            font-size: 13px;
         }
         .admin-badge {
-            font-size: 10px;
+            font-size: 9px;
             background: var(--primary);
             color: #fff;
-            padding: 2px 10px;
+            padding: 2px 8px;
             border-radius: 10px;
             font-weight: 600;
         }
@@ -234,20 +214,19 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             padding: 30px; 
         }
         
-        /* Factory Card - Glass */
         .factory-card {
             background: var(--glass-bg);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
             border: 1px solid var(--glass-border);
             border-radius: var(--border-radius);
-            padding: 28px 32px;
+            padding: 24px 28px;
             margin-bottom: 30px;
             display: flex;
             justify-content: space-between;
             align-items: center;
             flex-wrap: wrap;
-            gap: 20px;
+            gap: 16px;
             box-shadow: var(--shadow);
             transition: all 0.4s ease;
         }
@@ -256,39 +235,38 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             box-shadow: 0 12px 40px rgba(0,0,0,0.12);
             background: rgba(255,255,255,0.2);
         }
-        .factory-card .left { display: flex; align-items: center; gap: 18px; }
+        .factory-card .left { display: flex; align-items: center; gap: 16px; }
         .factory-card .left .icon { 
-            font-size: 36px; 
+            font-size: 32px; 
             background: rgba(255,255,255,0.2);
-            padding: 12px;
+            padding: 10px;
             border-radius: 14px;
         }
         .factory-card .left .info h3 { 
             color: var(--steel); 
-            font-size: 14px; 
+            font-size: 13px; 
             font-weight: 500; 
         }
         .factory-card .left .info .value { 
             color: var(--text-dark); 
-            font-size: 38px; 
+            font-size: 34px; 
             font-weight: 900; 
         }
-        .factory-card .right { display: flex; gap: 30px; flex-wrap: wrap; }
+        .factory-card .right { display: flex; gap: 24px; flex-wrap: wrap; }
         .factory-card .right .stat { text-align: center; }
         .factory-card .right .stat .label { 
             color: var(--steel); 
-            font-size: 12px; 
+            font-size: 11px; 
             font-weight: 500; 
         }
         .factory-card .right .stat .number { 
             color: var(--text-dark); 
-            font-size: 22px; 
+            font-size: 20px; 
             font-weight: 800; 
         }
         
-        /* Section Title */
         .section-title { 
-            font-size: 22px; 
+            font-size: 20px; 
             font-weight: 800; 
             color: var(--text-dark); 
             margin-bottom: 20px;
@@ -299,14 +277,13 @@ $factory_eff = getFactoryEfficiency($conn, $date);
         .section-title .sub { 
             font-weight: 500; 
             color: var(--steel); 
-            font-size: 15px; 
+            font-size: 14px; 
         }
         
-        /* Division Grid - Glass Cards */
         .division-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 20px;
+            gap: 18px;
             margin-bottom: 30px;
         }
         .division-card {
@@ -315,7 +292,7 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             -webkit-backdrop-filter: blur(20px);
             border: 1px solid var(--glass-border);
             border-radius: var(--border-radius);
-            padding: 24px 20px;
+            padding: 20px 16px;
             box-shadow: var(--shadow);
             transition: all 0.4s ease;
             cursor: pointer;
@@ -337,34 +314,30 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             transition: opacity 0.4s ease;
         }
         .division-card:hover { 
-            transform: translateY(-8px) scale(1.02); 
+            transform: translateY(-6px) scale(1.02); 
             box-shadow: 0 16px 48px rgba(0,0,0,0.12);
             border-color: rgba(33,115,70,0.3);
             background: rgba(255,255,255,0.25);
         }
-        .division-card:hover::before {
-            opacity: 1;
-        }
+        .division-card:hover::before { opacity: 1; }
         .division-card .icon { 
-            font-size: 44px; 
-            margin-bottom: 10px;
+            font-size: 38px; 
+            margin-bottom: 8px;
             display: block;
             transition: transform 0.4s ease;
         }
-        .division-card:hover .icon {
-            transform: scale(1.1) rotate(-5deg);
-        }
+        .division-card:hover .icon { transform: scale(1.1) rotate(-5deg); }
         .division-card .name { 
-            font-size: 20px; 
+            font-size: 18px; 
             font-weight: 800; 
             color: var(--text-dark); 
             margin-bottom: 4px;
         }
         .division-card .units-info { 
             color: var(--steel); 
-            font-size: 14px; 
+            font-size: 13px; 
             font-weight: 500;
-            margin-bottom: 10px; 
+            margin-bottom: 8px; 
         }
         .division-card .units-info strong { 
             color: var(--text-dark); 
@@ -377,26 +350,26 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             gap: 6px; 
         }
         .division-card .efficiency .value { 
-            font-size: 34px; 
+            font-size: 30px; 
             font-weight: 900; 
             color: var(--primary); 
         }
         .division-card .efficiency .label { 
             color: var(--steel); 
-            font-size: 13px; 
+            font-size: 12px; 
             font-weight: 500;
         }
         .division-card .efficiency .no-data { 
             color: #b0b8c4; 
-            font-size: 22px; 
+            font-size: 20px; 
             font-weight: 700;
         }
         .division-card .progress-bar { 
             width: 100%; 
-            height: 6px; 
+            height: 5px; 
             background: rgba(0,0,0,0.06); 
             border-radius: 4px; 
-            margin-top: 14px; 
+            margin-top: 12px; 
             overflow: hidden; 
         }
         .division-card .progress-bar .fill { 
@@ -406,65 +379,45 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             transition: width 0.8s ease; 
         }
         .division-card .status-badge {
-            font-size: 11px;
-            padding: 3px 16px;
+            font-size: 10px;
+            padding: 2px 14px;
             border-radius: 20px;
             font-weight: 600;
             display: inline-block;
-            margin-top: 10px;
+            margin-top: 8px;
             transition: all 0.3s ease;
         }
-        .status-active { 
-            background: rgba(33,115,70,0.15); 
-            color: var(--primary); 
-        }
-        .status-inactive { 
-            background: rgba(0,0,0,0.05); 
-            color: #999; 
-        }
+        .status-active { background: rgba(33,115,70,0.15); color: var(--primary); }
+        .status-inactive { background: rgba(0,0,0,0.05); color: #999; }
         
-        /* Responsive */
-        @media (max-width: 1024px) {
-            .division-grid { grid-template-columns: repeat(2, 1fr); }
-        }
+        @media (max-width: 1024px) { .division-grid { grid-template-columns: repeat(2, 1fr); } }
         @media (max-width: 768px) {
-            .topbar { 
-                padding: 12px 16px; 
-                flex-direction: column; 
-                align-items: stretch; 
-                gap: 10px;
-            }
+            .topbar { padding: 10px 16px; flex-direction: column; align-items: stretch; gap: 8px; }
             .topnav { justify-content: center; }
             .right { justify-content: center; }
             .container { padding: 16px; }
-            .factory-card { 
-                flex-direction: column; 
-                text-align: center; 
-                padding: 20px;
-            }
+            .factory-card { flex-direction: column; text-align: center; padding: 18px; }
             .factory-card .right { justify-content: center; }
-            .division-grid { grid-template-columns: 1fr 1fr; gap: 14px; }
-            .division-card { padding: 18px 14px; }
-            .division-card .icon { font-size: 32px; }
+            .division-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
+            .division-card { padding: 16px 12px; }
+            .division-card .icon { font-size: 30px; }
             .division-card .efficiency .value { font-size: 24px; }
+            .topnav a { padding: 6px 12px; font-size: 13px; }
+            .topbar .logo-mark img { height: 26px; }
         }
         @media (max-width: 480px) {
             .division-grid { grid-template-columns: 1fr; }
             .factory-card .left { flex-direction: column; text-align: center; }
-            .topnav a { padding: 6px 12px; font-size: 13px; }
-            .topbar .logo-mark img { height: 30px; }
         }
     </style>
 </head>
 <body>
-    <!-- Background Shapes -->
     <div class="bg-shapes">
         <div class="shape shape-1"></div>
         <div class="shape shape-2"></div>
         <div class="shape shape-3"></div>
     </div>
 
-    <!-- Top Bar -->
     <div class="topbar">
         <div class="logo-mark">
             <img src="assets/img/ham_logo.png" alt="Hameedia" onerror="this.style.display='none'">
@@ -491,7 +444,6 @@ $factory_eff = getFactoryEfficiency($conn, $date);
     </div>
 
     <div class="container">
-        <!-- Factory Card -->
         <div class="factory-card">
             <div class="left">
                 <div class="icon">🏭</div>
@@ -512,7 +464,6 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             </div>
         </div>
 
-        <!-- Division Grid -->
         <div class="section-title">
             Select a deviation
             <span class="sub">Live efficiency for the selected report date</span>
@@ -557,7 +508,6 @@ $factory_eff = getFactoryEfficiency($conn, $date);
     </div>
 
     <script>
-        // Live clock - updates every minute (no seconds)
         function updateClock() {
             const now = new Date();
             let hours = now.getHours();
@@ -567,7 +517,7 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             document.getElementById('live-clock').textContent = hours + ':' + minutes + ' ' + ampm;
         }
         updateClock();
-        setInterval(updateClock, 60000); // Update every minute
+        setInterval(updateClock, 60000);
     </script>
 </body>
 </html>

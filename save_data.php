@@ -1,5 +1,5 @@
 <?php
-// save_data.php - AJAX Save Handler
+// save_data.php - AJAX Save Handler (Dynamic Hours Fixed)
 session_start();
 require_once 'config/database.php';
 require_once 'includes/auth.php';
@@ -17,6 +17,7 @@ $action = $_POST['action'] ?? '';
 $date = $_POST['date'] ?? date('Y-m-d');
 $division_id = (int)($_POST['division'] ?? 0);
 $component_id = $_POST['component'] ?? 0;
+$work_hours = (float)($_POST['work_hours'] ?? 10); // RECEIVE DYNAMIC HOURS
 
 $response = ['success' => false, 'message' => ''];
 
@@ -36,7 +37,7 @@ try {
             'day_forecast' => (float)($data['day_forecast'] ?? 0),
             'unit_carder' => (int)($data['unit_carder'] ?? 0),
             'plan_hours' => (float)($data['plan_hours'] ?? 0),
-            'worked_hours' => (float)($data['worked_hours'] ?? 0),
+            'worked_hours' => $work_hours, // USE DYNAMIC VALUE
             'available_minutes' => (float)($data['available_minutes'] ?? 0),
             'plan_minutes' => (float)($data['plan_minutes'] ?? 0),
             'plan_eff' => (float)($data['plan_eff'] ?? 0),
@@ -58,16 +59,25 @@ try {
         
         $save_data[$field] = $value;
         
+        // Recalculate with NEW WORK HOURS
         $ttl_sam_pc = $save_data['ttl_sam_pc'];
-        $available_minutes = $save_data['available_minutes'];
+        $plan_hours = $save_data['plan_hours'];
+        $unit_carder = $save_data['unit_carder'];
+        $day_forecast = $save_data['day_forecast'];
+        
+        $save_data['available_minutes'] = $plan_hours * $work_hours * 60;
+        $save_data['plan_minutes'] = $day_forecast * $unit_carder;
+        $save_data['plan_eff'] = $save_data['available_minutes'] > 0 ? 
+            ($save_data['plan_minutes'] / $save_data['available_minutes']) * 100 : 0;
+        $save_data['target_100'] = $unit_carder > 0 ? ($plan_hours / $unit_carder) * 60 : 0;
         
         $day_total = 0;
         for ($h = 1; $h <= 11; $h++) {
             $day_total += $save_data["hour_$h"];
         }
         $save_data['day_total'] = $day_total;
-        $save_data['acvd_eff'] = $available_minutes > 0 ? 
-            ($day_total * $ttl_sam_pc / $available_minutes) * 100 : 0;
+        $save_data['acvd_eff'] = $save_data['available_minutes'] > 0 ? 
+            ($day_total * $ttl_sam_pc / $save_data['available_minutes']) * 100 : 0;
         
         if (saveReportData($conn, $save_data)) {
             $response['success'] = true;
@@ -87,7 +97,7 @@ try {
             'day_forecast' => (float)($data['day_forecast'] ?? 0),
             'unit_carder' => (int)($data['unit_carder'] ?? 0),
             'plan_hours' => (float)($data['plan_hours'] ?? 0),
-            'worked_hours' => (float)($data['worked_hours'] ?? 0),
+            'worked_hours' => $work_hours, // USE DYNAMIC VALUE
             'available_minutes' => (float)($data['available_minutes'] ?? 0),
             'plan_minutes' => (float)($data['plan_minutes'] ?? 0),
             'plan_eff' => (float)($data['plan_eff'] ?? 0),
@@ -109,14 +119,13 @@ try {
         
         $save_data[$field] = $value;
         
-        // Recalculate derived fields
+        // Recalculate derived fields using NEW WORK HOURS
         $plan_hours = $save_data['plan_hours'];
-        $worked_hours = $save_data['worked_hours'];
         $unit_carder = $save_data['unit_carder'];
         $day_forecast = $save_data['day_forecast'];
         $ttl_sam_pc = $save_data['ttl_sam_pc'];
         
-        $save_data['available_minutes'] = ($plan_hours * $worked_hours) * 60;
+        $save_data['available_minutes'] = ($plan_hours * $work_hours) * 60;
         $save_data['plan_minutes'] = $day_forecast * $unit_carder;
         $save_data['plan_eff'] = $save_data['available_minutes'] > 0 ? 
             ($save_data['plan_minutes'] / $save_data['available_minutes']) * 100 : 0;

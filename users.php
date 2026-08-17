@@ -420,24 +420,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     </div>
 
     <div class="topbar">
-        <div class="logo-mark">
-            <img src="assets/img/ham_logo.png" alt="Hameedia" onerror="this.style.display='none'">
-        </div>
-        <nav class="topnav">
-            <a href="dashboard.php">Dashboard</a>
-            <a href="reports.php">Reports</a>
-            <a href="users.php" class="active">Users</a>
-        </nav>
-        <div class="right">
-            <span class="live-chip"><span class="live-dot"></span><span id="live-clock">--:--</span></span>
-            <span class="date-display"><?php echo date('M d, Y'); ?></span>
-            <span class="user-name"><?php echo htmlspecialchars($_SESSION['full_name'] ?? $_SESSION['username']); ?></span>
-            <?php if (isAdmin()): ?>
-            <span class="admin-badge">Admin</span>
-            <?php endif; ?>
-            <a href="logout.php" class="logout">Sign out</a>
-        </div>
+    <div class="logo-mark">
+        <img src="assets/img/ham_logo.png" alt="Hameedia" onerror="this.style.display='none'">
     </div>
+    <nav class="topnav">
+        <a href="dashboard.php">Dashboard</a>
+        <a href="reports.php">Reports</a>
+        <a href="users.php" class="active">Users</a>
+    </nav>
+    <div class="right">
+        <span class="live-chip"><span class="live-dot"></span><span id="live-clock">--:--</span></span>
+        <span class="date-display"><?php echo date('M d, Y'); ?></span>
+        <span class="user-name"><?php echo htmlspecialchars($_SESSION['full_name'] ?? $_SESSION['username']); ?></span>
+        <?php if (isAdmin()): ?>
+        <span class="admin-badge">Admin</span>
+        <?php endif; ?>
+        <a href="logout.php" class="logout">Sign out</a>
+    </div>
+</div>
 
     <div class="toast" id="toast"></div>
 
