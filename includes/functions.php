@@ -1,5 +1,5 @@
 <?php
-// includes/functions.php - FIXED VERSION
+// includes/functions.php
 require_once __DIR__ . '/../config/database.php';
 
 function getDivisions($conn) {
@@ -45,7 +45,6 @@ function getReportData($conn, $devition_id, $unit_id, $date) {
 }
 
 function saveReportData($conn, $data) {
-    // Check if record exists
     $check = "SELECT id FROM production_reports 
               WHERE devition_id = ? AND unit_id = ? AND report_date = ?";
     $stmt = $conn->prepare($check);
@@ -58,7 +57,6 @@ function saveReportData($conn, $data) {
     $existing = $result->fetch_assoc();
     
     if ($existing) {
-        // Update
         $sql = "UPDATE production_reports SET 
                 ttl_sam_pc = ?, unit_smv = ?, day_forecast = ?, unit_carder = ?,
                 plan_hours = ?, worked_hours = ?, available_minutes = ?,
@@ -83,7 +81,6 @@ function saveReportData($conn, $data) {
             $data['day_total'], $data['acvd_eff'], $existing['id']
         );
     } else {
-        // Insert
         $sql = "INSERT INTO production_reports (
             report_date, devition_id, unit_id, ttl_sam_pc, unit_smv,
             day_forecast, unit_carder, plan_hours, worked_hours,
@@ -154,5 +151,60 @@ function calculateMatchOut($conn, $devition_id, $date) {
     }
     
     return $match_out;
+}
+
+function getDivisionStats($conn, $division_id, $date) {
+    $components = getComponents($conn, $division_id);
+    $total_units = 0;
+    $setup_units = 0;
+    $total_eff = 0;
+    $eff_count = 0;
+    $total_day_ttl = 0;
+    $total_ern_min = 0;
+    $total_available = 0;
+    
+    foreach ($components as $comp) {
+        if ($comp['is_match_out']) continue;
+        $total_units++;
+        $data = getReportData($conn, $division_id, $comp['id'], $date);
+        if (!empty($data) && ($data['ttl_sam_pc'] ?? 0) > 0) {
+            $setup_units++;
+            if ($data['acvd_eff'] > 0) {
+                $total_eff += $data['acvd_eff'];
+                $eff_count++;
+            }
+            $day_total = 0;
+            for ($h = 1; $h <= 11; $h++) {
+                $day_total += $data["hour_$h"] ?? 0;
+            }
+            $total_day_ttl += $day_total;
+            $total_ern_min += $day_total * ($data['ttl_sam_pc'] ?? 0);
+            $total_available += $data['available_minutes'] ?? 0;
+        }
+    }
+    
+    return [
+        'total_units' => $total_units,
+        'setup_units' => $setup_units,
+        'efficiency' => $eff_count > 0 ? round($total_eff / $eff_count, 0) : 0,
+        'day_total' => $total_day_ttl,
+        'ern_minutes' => $total_ern_min,
+        'available_minutes' => $total_available,
+        'has_data' => $setup_units > 0
+    ];
+}
+
+function getFactoryEfficiency($conn, $date) {
+    $divisions = getDivisions($conn);
+    $total_eff = 0;
+    $count = 0;
+    foreach ($divisions as $div) {
+        $stats = getDivisionStats($conn, $div['id'], $date);
+        if ($stats['efficiency'] > 0) {
+            $total_eff += $stats['efficiency'];
+            $count++;
+        }
+    }
+    return $count > 0 ? round($total_eff / $count, 0) : 0;
 }
 ?>

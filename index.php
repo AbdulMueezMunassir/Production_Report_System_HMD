@@ -1,10 +1,10 @@
 <?php
-// index.php - Login Page with Green Theme
+// index.php - Complete Login Page
 session_start();
 require_once 'config/database.php';
-require_once 'includes/auth.php';
 
-if (isLoggedIn()) {
+// Check if already logged in
+if (isset($_SESSION['user_id']) && isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
     header('Location: dashboard.php');
     exit;
 }
@@ -18,12 +18,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($username) || empty($password)) {
         $error = 'Please enter username and password';
     } else {
-        if (loginUser($username, $password)) {
-            header('Location: dashboard.php');
-            exit;
+        $conn = getDBConnection();
+        
+        // Check user
+        $stmt = $conn->prepare("SELECT id, username, password, full_name, role FROM users WHERE username = ?");
+        $stmt->bind_param("s", $username);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $user = $result->fetch_assoc();
+        
+        if ($user) {
+            // Verify password
+            if (password_verify($password, $user['password'])) {
+                // Login successful
+                $_SESSION['user_id'] = $user['id'];
+                $_SESSION['username'] = $user['username'];
+                $_SESSION['full_name'] = $user['full_name'];
+                $_SESSION['role'] = $user['role'];
+                $_SESSION['logged_in'] = true;
+                
+                header('Location: dashboard.php');
+                exit;
+            } else {
+                $error = 'Invalid username or password';
+            }
         } else {
             $error = 'Invalid username or password';
         }
+        $conn->close();
     }
 }
 ?>
@@ -61,48 +83,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             opacity: 0.08;
             animation: float 20s infinite ease-in-out;
         }
-        .shape-1 {
-            width: 400px;
-            height: 400px;
-            background: #fff;
-            top: -150px;
-            right: -150px;
-            animation-delay: 0s;
-        }
-        .shape-2 {
-            width: 300px;
-            height: 300px;
-            background: #fff;
-            bottom: -100px;
-            left: -100px;
-            animation-delay: -5s;
-        }
-        .shape-3 {
-            width: 200px;
-            height: 200px;
-            background: #fff;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            animation-delay: -10s;
-        }
+        .shape-1 { width: 400px; height: 400px; background: #fff; top: -150px; right: -150px; }
+        .shape-2 { width: 300px; height: 300px; background: #fff; bottom: -100px; left: -100px; animation-delay: -5s; }
+        .shape-3 { width: 200px; height: 200px; background: #fff; top: 50%; left: 50%; transform: translate(-50%, -50%); animation-delay: -10s; }
         @keyframes float {
             0%, 100% { transform: translate(0, 0) scale(1); }
             25% { transform: translate(50px, -50px) scale(1.1); }
             50% { transform: translate(-30px, 30px) scale(0.9); }
             75% { transform: translate(20px, 20px) scale(1.05); }
         }
-        .login-wrapper {
-            position: relative;
-            z-index: 1;
-            width: 100%;
-            max-width: 440px;
-            padding: 20px;
-        }
+        .login-wrapper { position: relative; z-index: 1; width: 100%; max-width: 440px; padding: 20px; }
         .glass-container {
             background: rgba(255,255,255,0.12);
             backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
             border-radius: 24px;
             padding: 48px 40px 40px;
             box-shadow: 0 25px 50px -12px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.2);
@@ -125,10 +118,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             0% { transform: translateX(-50%) rotate(25deg); }
             100% { transform: translateX(50%) rotate(25deg); }
         }
-        .glass-container:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 30px 60px -12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.3);
-        }
         .logo-section { text-align: center; margin-bottom: 32px; }
         .logo-icon {
             display: inline-flex;
@@ -147,22 +136,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             0%, 100% { transform: scale(1); }
             50% { transform: scale(1.05); }
         }
-        .logo-icon:hover {
-            transform: scale(1.1) rotate(-5deg);
-            background: rgba(255,255,255,0.25);
-        }
-        .logo-section h1 {
-            color: #fff;
-            font-size: 28px;
-            font-weight: 700;
-            letter-spacing: -0.5px;
-            text-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        .logo-section .subtitle {
-            color: rgba(255,255,255,0.8);
-            font-size: 14px;
-            margin-top: 4px;
-        }
+        .logo-section h1 { color: #fff; font-size: 28px; font-weight: 700; }
+        .logo-section .subtitle { color: rgba(255,255,255,0.8); font-size: 14px; margin-top: 4px; }
         .error-message {
             background: rgba(255,0,0,0.15);
             border: 1px solid rgba(255,0,0,0.2);
@@ -174,25 +149,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             display: flex;
             align-items: center;
             gap: 10px;
-            animation: slideDown 0.4s ease;
-        }
-        @keyframes slideDown {
-            from { opacity: 0; transform: translateY(-10px); }
-            to { opacity: 1; transform: translateY(0); }
         }
         .form-group { margin-bottom: 20px; }
-        .form-group label {
-            display: block;
-            color: rgba(255,255,255,0.9);
-            font-size: 13px;
-            font-weight: 500;
-            margin-bottom: 6px;
-            letter-spacing: 0.3px;
+        .form-group label { 
+            display: block; 
+            color: rgba(255,255,255,0.9); 
+            font-size: 13px; 
+            font-weight: 500; 
+            margin-bottom: 6px; 
         }
-        .input-wrapper {
-            position: relative;
-            transition: all 0.3s ease;
-        }
+        .input-wrapper { position: relative; }
         .input-wrapper .input-icon {
             position: absolute;
             left: 16px;
@@ -200,7 +166,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             transform: translateY(-50%);
             color: rgba(255,255,255,0.5);
             font-size: 18px;
-            transition: all 0.3s ease;
         }
         .input-wrapper input {
             width: 100%;
@@ -213,18 +178,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             transition: all 0.3s ease;
             font-family: 'Inter', sans-serif;
         }
-        .input-wrapper input::placeholder {
-            color: rgba(255,255,255,0.4);
-        }
+        .input-wrapper input::placeholder { color: rgba(255,255,255,0.4); }
         .input-wrapper input:focus {
             outline: none;
             background: rgba(255,255,255,0.12);
             border-color: rgba(255,255,255,0.4);
-            box-shadow: 0 0 0 4px rgba(255,255,255,0.05);
-        }
-        .input-wrapper input:hover {
-            background: rgba(255,255,255,0.12);
-            border-color: rgba(255,255,255,0.25);
         }
         .btn-login {
             width: 100%;
@@ -235,43 +193,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             color: #fff;
             font-size: 16px;
             font-weight: 600;
-            cursor: pointer;
+            cursor: pointer !important;
             transition: all 0.3s ease;
             font-family: 'Inter', sans-serif;
             margin-top: 8px;
             position: relative;
             overflow: hidden;
         }
-        .btn-login::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
-            transition: left 0.5s ease;
+        .btn-login:hover { 
+            transform: translateY(-3px); 
+            box-shadow: 0 20px 40px -12px rgba(33,115,70,0.5);
+            background: linear-gradient(135deg, #217346 0%, #2d8f4e 100%);
         }
-        .btn-login:hover::before { left: 100%; }
-        .btn-login:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 20px 40px -12px rgba(33, 115, 70, 0.5);
+        .btn-login:active {
+            transform: translateY(0px);
         }
-        .btn-login:active { transform: translateY(0px); }
-        .login-footer {
-            text-align: center;
-            margin-top: 24px;
-            padding-top: 20px;
-            border-top: 1px solid rgba(255,255,255,0.08);
+        .btn-login .btn-content {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
         }
-        .login-footer .default-creds {
-            color: rgba(255,255,255,0.5);
-            font-size: 12px;
-        }
-        .login-footer .default-creds strong {
-            color: rgba(255,255,255,0.7);
-            font-weight: 500;
-        }
+        .login-footer { text-align: center; margin-top: 24px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.08); }
+        .login-footer .default-creds { color: rgba(255,255,255,0.5); font-size: 12px; }
+        .login-footer .default-creds strong { color: rgba(255,255,255,0.7); }
         .status-bar {
             display: flex;
             justify-content: space-between;
@@ -282,31 +227,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             flex-wrap: wrap;
             gap: 8px;
         }
-        .status-bar .dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            display: inline-block;
-            background: #4ade80;
-            animation: blink 1.5s infinite;
-        }
-        @keyframes blink {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.3; }
-        }
-        .status-bar .weather-icon {
-            display: inline-block;
-            animation: weatherPulse 3s infinite;
-        }
-        @keyframes weatherPulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.1); }
-        }
+        .status-bar .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; background: #4ade80; animation: blink 1.5s infinite; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
         @media (max-width: 480px) {
             .glass-container { padding: 32px 24px 28px; }
             .logo-section h1 { font-size: 24px; }
             .logo-icon { width: 60px; height: 60px; font-size: 30px; }
-            .input-wrapper input { padding: 12px 14px 12px 42px; font-size: 14px; }
         }
     </style>
 </head>
@@ -329,7 +255,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="error-message">⚠️ <?php echo htmlspecialchars($error); ?></div>
             <?php endif; ?>
 
-            <form method="POST" action="">
+            <form method="POST" action="" id="loginForm" autocomplete="off">
                 <div class="form-group">
                     <label for="username">Username</label>
                     <div class="input-wrapper">
@@ -346,7 +272,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
                 </div>
 
-                <button type="submit" class="btn-login">Sign In →</button>
+                <button type="submit" class="btn-login" id="loginBtn">
+                    <span class="btn-content">Sign In →</span>
+                </button>
             </form>
 
             <div class="login-footer">
@@ -355,7 +283,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             <div class="status-bar">
                 <span><span class="dot"></span> System Online</span>
-                <span><span class="weather-icon">☀️</span> 31°C</span>
+                <span>☀️ 31°C</span>
                 <span id="currentTime">Loading...</span>
                 <span id="currentDate">Loading...</span>
             </div>
@@ -370,6 +298,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         updateClock();
         setInterval(updateClock, 1000);
+
+        // Form submission handler
+        document.getElementById('loginForm').addEventListener('submit', function(e) {
+            console.log('Form submitted');
+            const btn = document.getElementById('loginBtn');
+            btn.innerHTML = '<span class="btn-content">⏳ Signing in...</span>';
+            btn.disabled = true;
+        });
     </script>
 </body>
 </html>
