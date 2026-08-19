@@ -1,5 +1,5 @@
 <?php
-// dashboard.php
+// dashboard.php - With Back Button and Proper Layout
 require_once 'config/database.php';
 require_once 'includes/auth.php';
 require_once 'includes/functions.php';
@@ -13,10 +13,10 @@ $divisions = getDivisions($conn);
 $division_stats = [];
 
 foreach ($divisions as $div) {
-    $division_stats[$div['id']] = getDivisionStats($conn, $div['id'], $date, 10);
+    $division_stats[$div['id']] = getDivisionStats($conn, $div['id'], $date, 11);
 }
 
-$factory_eff = getFactoryEfficiency($conn, $date, 10);
+$factory_eff = getFactoryEfficiency($conn, $date, 11);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -93,9 +93,18 @@ $factory_eff = getFactoryEfficiency($conn, $date, 10);
             box-shadow: 0 4px 20px rgba(0,0,0,0.05);
         }
         .topbar .logo-mark { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: var(--primary-dark); }
-        .topbar .logo-mark img { height: 30px; width: auto; display: block; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1)); }
+        .topbar .logo-mark img { height: 30px; width: auto; display: block; }
         .topnav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-        .topnav a { color: var(--steel); text-decoration: none; font-size: 14px; font-weight: 600; padding: 7px 16px; border-radius: 10px; transition: all 0.3s; background: transparent; }
+        .topnav a {
+            color: var(--steel);
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 600;
+            padding: 7px 16px;
+            border-radius: 10px;
+            transition: all 0.3s;
+            background: transparent;
+        }
         .topnav a:hover { color: var(--primary); background: rgba(33, 115, 70, 0.08); }
         .topnav a.active { color: #fff; background: var(--primary); box-shadow: 0 4px 15px rgba(33, 115, 70, 0.3); }
         .right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--steel); }
@@ -165,7 +174,6 @@ $factory_eff = getFactoryEfficiency($conn, $date, 10);
             overflow: hidden;
         }
         .division-card:hover { transform: translateY(-6px) scale(1.02); box-shadow: 0 16px 48px rgba(0,0,0,0.12); border-color: rgba(33,115,70,0.3); background: rgba(255,255,255,0.25); }
-        .division-card:hover::before { opacity: 1; }
         .division-card .icon { font-size: 38px; margin-bottom: 8px; display: block; transition: transform 0.4s ease; }
         .division-card:hover .icon { transform: scale(1.1) rotate(-5deg); }
         .division-card .name { font-size: 18px; font-weight: 800; color: var(--text-dark); margin-bottom: 4px; }
@@ -180,6 +188,30 @@ $factory_eff = getFactoryEfficiency($conn, $date, 10);
         .division-card .status-badge { font-size: 10px; padding: 2px 14px; border-radius: 20px; font-weight: 600; display: inline-block; margin-top: 8px; transition: all 0.3s ease; }
         .status-active { background: rgba(33,115,70,0.15); color: var(--primary); }
         .status-inactive { background: rgba(0,0,0,0.05); color: #999; }
+        
+        /* Back Button */
+        .back-button {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 18px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: 10px;
+            color: var(--text-dark);
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            margin-bottom: 20px;
+        }
+        .back-button:hover {
+            background: rgba(255,255,255,0.3);
+            transform: translateX(-4px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+        }
         
         @media (max-width: 1024px) { .division-grid { grid-template-columns: repeat(2, 1fr); } }
         @media (max-width: 768px) {
@@ -215,8 +247,10 @@ $factory_eff = getFactoryEfficiency($conn, $date, 10);
         </div>
         <nav class="topnav">
             <a href="dashboard.php" class="active">Dashboard</a>
+            
             <a href="reports.php">Reports</a>
             <?php if (isAdmin()): ?>
+            <a href="analytics.php">Analytics</a>
             <a href="users.php">Users</a>
             <?php endif; ?>
         </nav>
@@ -232,6 +266,11 @@ $factory_eff = getFactoryEfficiency($conn, $date, 10);
     </div>
 
     <div class="container">
+        <!-- Back Button -->
+        <a href="#" class="back-button" onclick="history.back(); return false;">
+            ← Back
+        </a>
+
         <div class="factory-card">
             <div class="left">
                 <div class="icon">🏭</div>

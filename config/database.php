@@ -1,5 +1,5 @@
 <?php
-// config/database.php - PDO Connection (Final Version)
+// config/database.php - PDO Connection
 define('DB_HOST', 'localhost');
 define('DB_USER', 'root');
 define('DB_PASS', '');
@@ -15,6 +15,11 @@ function getDB() {
     } catch (PDOException $e) {
         die("Database connection error: " . $e->getMessage());
     }
+}
+
+// For backward compatibility
+function getDBConnection() {
+    return getDB();
 }
 
 if (session_status() === PHP_SESSION_NONE) {

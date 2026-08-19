@@ -1,5 +1,5 @@
 <?php
-// users.php - Users Management Page with Glass Morphism
+// users.php - Users Management Page with Glass Morphism (FIXED)
 require_once 'config/database.php';
 require_once 'includes/auth.php';
 require_once 'includes/functions.php';
@@ -12,7 +12,7 @@ if (!isAdmin()) {
     exit;
 }
 
-$conn = getDBConnection();
+$conn = getDB(); // FIXED: Use getDB() instead of getDBConnection()
 $users = getAllUsers($conn);
 
 // Handle AJAX requests
@@ -34,11 +34,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $response['message'] = 'Password must be at least 6 characters';
         } else {
             $check = $conn->prepare("SELECT id FROM users WHERE username = ?");
-            $check->bind_param("s", $username);
-            $check->execute();
-            $result = $check->get_result();
+            $check->execute([$username]);
+            $result = $check->fetch(PDO::FETCH_ASSOC);
             
-            if ($result->num_rows > 0) {
+            if ($result) {
                 $response['message'] = 'Username already exists';
             } else {
                 if (createUser($conn, $username, $password, $full_name, $role)) {
@@ -56,10 +55,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $response['message'] = 'Invalid user ID';
         } else {
             $check = $conn->prepare("SELECT role FROM users WHERE id = ?");
-            $check->bind_param("i", $user_id);
-            $check->execute();
-            $result = $check->get_result();
-            $user = $result->fetch_assoc();
+            $check->execute([$user_id]);
+            $user = $check->fetch(PDO::FETCH_ASSOC);
             
             if ($user && $user['role'] === 'admin') {
                 $response['message'] = 'Cannot delete admin user';
@@ -80,16 +77,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $response['message'] = 'Password must be at least 6 characters';
         } else {
             $check = $conn->prepare("SELECT id FROM users WHERE id = ?");
-            $check->bind_param("i", $user_id);
-            $check->execute();
-            $result = $check->get_result();
+            $check->execute([$user_id]);
+            $result = $check->fetch(PDO::FETCH_ASSOC);
             
-            if ($result->num_rows > 0) {
+            if ($result) {
                 $hash = password_hash($new_password, PASSWORD_DEFAULT);
                 $stmt = $conn->prepare("UPDATE users SET password = ? WHERE id = ?");
-                $stmt->bind_param("si", $hash, $user_id);
+                $stmt->execute([$hash, $user_id]);
                 
-                if ($stmt->execute()) {
+                if ($stmt->rowCount() > 0) {
                     $response['success'] = true;
                     $response['message'] = 'Password reset successfully';
                 } else {
@@ -104,6 +100,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     echo json_encode($response);
     exit;
 }
+
+$current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -172,7 +170,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
             border-bottom: 1px solid var(--glass-border);
-            padding: 12px 30px;
+            padding: 10px 30px;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -180,36 +178,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             gap: 10px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.05);
         }
-        .topbar .logo-mark { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 20px; color: var(--primary-dark); }
-        .topbar .logo-mark img { height: 40px; width: auto; display: block; }
-        .topnav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .topbar .logo-mark { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: var(--primary-dark); }
+        .topbar .logo-mark img { height: 30px; width: auto; display: block; }
+        .topnav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
         .topnav a {
             color: var(--steel);
             text-decoration: none;
-            font-size: 15px;
+            font-size: 14px;
             font-weight: 600;
-            padding: 8px 18px;
+            padding: 7px 16px;
             border-radius: 10px;
             transition: all 0.3s;
             background: transparent;
         }
         .topnav a:hover { color: var(--primary); background: rgba(33, 115, 70, 0.08); }
         .topnav a.active { color: #fff; background: var(--primary); box-shadow: 0 4px 15px rgba(33, 115, 70, 0.3); }
-        .right { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 14px; color: var(--steel); }
-        .live-chip { display: flex; align-items: center; gap: 6px; background: rgba(33, 115, 70, 0.1); padding: 4px 14px; border-radius: 20px; font-size: 13px; color: var(--primary); font-weight: 600; }
-        .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); animation: blink 1.5s infinite; }
+        .right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--steel); }
+        .live-chip { display: flex; align-items: center; gap: 6px; background: rgba(33, 115, 70, 0.1); padding: 4px 12px; border-radius: 20px; font-size: 12px; color: var(--primary); font-weight: 600; }
+        .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--good); animation: blink 1.5s infinite; }
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-        .logout { color: var(--steel); text-decoration: none; padding: 6px 16px; border-radius: 8px; transition: all 0.3s; background: rgba(255,255,255,0.5); font-weight: 600; }
+        .logout { color: var(--steel); text-decoration: none; padding: 5px 14px; border-radius: 8px; transition: all 0.3s; background: rgba(255,255,255,0.5); font-weight: 600; font-size: 13px; }
         .logout:hover { background: rgba(220, 53, 69, 0.1); color: var(--bad); }
-        .date-display { color: var(--text-dark); font-size: 14px; font-weight: 600; }
-        .user-name { color: var(--text-dark); font-weight: 600; font-size: 14px; }
-        .admin-badge { font-size: 10px; background: var(--primary); color: #fff; padding: 2px 10px; border-radius: 10px; font-weight: 600; }
+        .date-display { color: var(--text-dark); font-size: 13px; font-weight: 600; }
+        .user-name { color: var(--text-dark); font-weight: 600; font-size: 13px; }
+        .admin-badge { font-size: 9px; background: var(--primary); color: #fff; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
 
         .wrap { position: relative; z-index: 5; max-width: 1200px; margin: 0 auto; padding: 30px; }
         
         .users-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
         .users-head h2 { font-size: 24px; font-weight: 800; color: var(--text-dark); }
         .users-head p { color: var(--steel); font-size: 14px; font-weight: 500; margin-top: 4px; }
+        
+        .back-button {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 18px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: 10px;
+            color: var(--text-dark);
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            margin-bottom: 20px;
+        }
+        .back-button:hover {
+            background: rgba(255,255,255,0.3);
+            transform: translateX(-4px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+        }
         
         .add-user-form {
             display: grid;
@@ -399,7 +420,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         .modal-actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px; }
         
         @media (max-width: 768px) {
-            .topbar { padding: 12px 16px; flex-direction: column; align-items: stretch; gap: 10px; }
+            .topbar { padding: 10px 16px; flex-direction: column; align-items: stretch; gap: 8px; }
             .topnav { justify-content: center; }
             .right { justify-content: center; }
             .wrap { padding: 16px; }
@@ -408,7 +429,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             .add-user-form .btn-amber { width: 100%; }
             .users-table { overflow-x: auto; }
             .topnav a { padding: 6px 12px; font-size: 13px; }
-            .topbar .logo-mark img { height: 30px; }
+            .topbar .logo-mark img { height: 26px; }
         }
     </style>
 </head>
@@ -420,98 +441,100 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     </div>
 
     <div class="topbar">
-    <div class="logo-mark">
-        <img src="assets/img/ham_logo.png" alt="Hameedia" onerror="this.style.display='none'">
+        <div class="logo-mark">
+            <img src="assets/img/ham_logo.png" alt="Hameedia" onerror="this.style.display='none'">
+        </div>
+        <nav class="topnav">
+            <a href="dashboard.php">Dashboard</a>
+            <a href="reports.php">Reports</a>
+            <a href="analytics.php">Analytics</a>
+            <a href="users.php" class="active">Users</a>
+        </nav>
+        <div class="right">
+            <span class="live-chip"><span class="live-dot"></span><span id="live-clock">--:--</span></span>
+            <span class="date-display"><?php echo date('M d, Y'); ?></span>
+            <span class="user-name"><?php echo htmlspecialchars($current_user); ?></span>
+            <?php if (isAdmin()): ?>
+            <span class="admin-badge">Admin</span>
+            <?php endif; ?>
+            <a href="logout.php" class="logout">Sign out</a>
+        </div>
     </div>
-    <nav class="topnav">
-        <a href="dashboard.php">Dashboard</a>
-        <a href="reports.php">Reports</a>
-        <a href="users.php" class="active">Users</a>
-    </nav>
-    <div class="right">
-        <span class="live-chip"><span class="live-dot"></span><span id="live-clock">--:--</span></span>
-        <span class="date-display"><?php echo date('M d, Y'); ?></span>
-        <span class="user-name"><?php echo htmlspecialchars($_SESSION['full_name'] ?? $_SESSION['username']); ?></span>
-        <?php if (isAdmin()): ?>
-        <span class="admin-badge">Admin</span>
-        <?php endif; ?>
-        <a href="logout.php" class="logout">Sign out</a>
-    </div>
-</div>
-
-    <div class="toast" id="toast"></div>
 
     <div class="wrap">
-        <section id="screen-users">
-            <div class="users-head">
-                <div>
-                    <h2>Users</h2>
-                    <p>Who can sign in and set up master data.</p>
-                </div>
-            </div>
+        <!-- Back Button -->
+        <a href="#" class="back-button" onclick="history.back(); return false;">
+            ← Back
+        </a>
 
-            <div class="add-user-form">
-                <div class="field">
-                    <label>Full name</label>
-                    <input id="user-name" type="text" placeholder="e.g. Ishara Fonseka">
-                </div>
-                <div class="field">
-                    <label>Username</label>
-                    <input id="user-username" type="text" placeholder="e.g. i.fonseka">
-                </div>
-                <div class="field">
-                    <label>Password</label>
-                    <div style="position:relative;">
-                        <input id="user-password" type="password" placeholder="Min 6 characters" style="width:100%;padding:8px 34px 8px 10px;border:1px solid var(--glass-border);border-radius:8px;font-size:14px;font-weight:500;font-family:'Inter';background:rgba(255,255,255,0.7);">
-                        <button type="button" onclick="togglePasswordVisibility('user-password',this)" 
-                            style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--steel);font-size:12px;font-weight:600;">Show</button>
-                    </div>
-                </div>
-                <div class="field">
-                    <label>Role</label>
-                    <select id="user-role">
-                        <option value="user">User</option>
-                        <option value="admin">Admin</option>
-                    </select>
-                </div>
-                <button class="btn-amber" onclick="addUser()">Add user</button>
+        <div class="users-head">
+            <div>
+                <h2>Users</h2>
+                <p>Who can sign in and set up master data.</p>
             </div>
-            <div id="user-form-error" style="display:none;color:var(--bad);font-size:13px;font-weight:600;margin:-10px 0 16px;"></div>
+        </div>
 
-            <div class="users-table">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Username</th>
-                            <th>Role</th>
-                            <th>Password</th>
-                            <th>Status</th>
-                            <th style="text-align:right;">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="users-body">
-                        <?php foreach ($users as $user): ?>
-                        <tr>
-                            <td><?php echo htmlspecialchars($user['full_name'] ?? $user['username']); ?></td>
-                            <td><?php echo htmlspecialchars($user['username']); ?></td>
-                            <td><span class="role-badge <?php echo $user['role'] === 'admin' ? 'role-admin' : 'role-user'; ?>"><?php echo ucfirst($user['role']); ?></span></td>
-                            <td><span class="password-hidden">••••••••</span></td>
-                            <td><span class="status-active">Active</span></td>
-                            <td style="text-align:right;">
-                                <div class="actions" style="justify-content:flex-end;">
-                                    <button class="btn-outline-sm" onclick="openPasswordModal(<?php echo $user['id']; ?>, '<?php echo htmlspecialchars($user['username']); ?>')">Set password</button>
-                                    <?php if ($user['role'] !== 'admin'): ?>
-                                    <button class="btn-danger" onclick="deleteUser(<?php echo $user['id']; ?>)">Delete</button>
-                                    <?php endif; ?>
-                                </div>
-                            </td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
+        <div class="add-user-form">
+            <div class="field">
+                <label>Full name</label>
+                <input id="user-name" type="text" placeholder="e.g. Ishara Fonseka">
             </div>
-        </section>
+            <div class="field">
+                <label>Username</label>
+                <input id="user-username" type="text" placeholder="e.g. i.fonseka">
+            </div>
+            <div class="field">
+                <label>Password</label>
+                <div style="position:relative;">
+                    <input id="user-password" type="password" placeholder="Min 6 characters" style="width:100%;padding:8px 34px 8px 10px;border:1px solid var(--glass-border);border-radius:8px;font-size:14px;font-weight:500;font-family:'Inter';background:rgba(255,255,255,0.7);">
+                    <button type="button" onclick="togglePasswordVisibility('user-password',this)" 
+                        style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--steel);font-size:12px;font-weight:600;">Show</button>
+                </div>
+            </div>
+            <div class="field">
+                <label>Role</label>
+                <select id="user-role">
+                    <option value="user">User</option>
+                    <option value="admin">Admin</option>
+                </select>
+            </div>
+            <button class="btn-amber" onclick="addUser()">Add user</button>
+        </div>
+        <div id="user-form-error" style="display:none;color:var(--bad);font-size:13px;font-weight:600;margin:-10px 0 16px;"></div>
+
+        <div class="users-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Username</th>
+                        <th>Role</th>
+                        <th>Password</th>
+                        <th>Status</th>
+                        <th style="text-align:right;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="users-body">
+                    <?php foreach ($users as $user): ?>
+                    <tr>
+                        <td><?php echo htmlspecialchars($user['full_name'] ?? $user['username']); ?></td>
+                        <td><?php echo htmlspecialchars($user['username']); ?></td>
+                        <td><span class="role-badge <?php echo $user['role'] === 'admin' ? 'role-admin' : 'role-user'; ?>"><?php echo ucfirst($user['role']); ?></span></td>
+                        <td><span class="password-hidden">••••••••</span></td>
+                        <td><span class="status-active">Active</span></td>
+                        <td style="text-align:right;">
+                            <div class="actions" style="justify-content:flex-end;">
+                                <button class="btn-outline-sm" onclick="openPasswordModal(<?php echo $user['id']; ?>, '<?php echo htmlspecialchars($user['username']); ?>')">Set password</button>
+                                <?php if ($user['role'] !== 'admin'): ?>
+                                <button class="btn-danger" onclick="deleteUser(<?php echo $user['id']; ?>)">Delete</button>
+                                <?php endif; ?>
+                            </div>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
     </div>
 
     <!-- Password Reset Modal -->
