@@ -1,24 +1,22 @@
 <?php
-// dashboard.php - Complete Dashboard with Glass Morphism
+// dashboard.php
 require_once 'config/database.php';
 require_once 'includes/auth.php';
 require_once 'includes/functions.php';
 
 requireLogin();
 
-$conn = getDBConnection();
+$conn = getDB();
 $date = isset($_GET['date']) ? $_GET['date'] : date('Y-m-d');
 
-// Get only 4 main divisions
 $divisions = getDivisions($conn);
 $division_stats = [];
 
 foreach ($divisions as $div) {
-    $division_stats[$div['id']] = getDivisionStats($conn, $div['id'], $date);
+    $division_stats[$div['id']] = getDivisionStats($conn, $div['id'], $date, 10);
 }
 
-// Get factory efficiency
-$factory_eff = getFactoryEfficiency($conn, $date);
+$factory_eff = getFactoryEfficiency($conn, $date, 10);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -32,7 +30,6 @@ $factory_eff = getFactoryEfficiency($conn, $date);
         :root {
             --primary: #217346;
             --primary-dark: #1a5c3a;
-            --primary-light: #e8f5e9;
             --bg: #f0f2f5;
             --card: rgba(255,255,255,0.85);
             --text: #1a2332;
@@ -55,7 +52,6 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             color: var(--text);
             position: relative;
         }
-        
         .bg-shapes {
             position: fixed;
             top: 0;
@@ -81,7 +77,6 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             50% { transform: translate(-40px, 40px) scale(0.9); }
             75% { transform: translate(30px, 30px) scale(1.05); }
         }
-        
         .topbar {
             position: relative;
             z-index: 10;
@@ -97,123 +92,23 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             gap: 10px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.05);
         }
-        .topbar .logo-mark { 
-            display: flex; 
-            align-items: center; 
-            gap: 10px; 
-            font-weight: 700; 
-            font-size: 18px; 
-            color: var(--primary-dark);
-        }
-        .topbar .logo-mark img { 
-            height: 30px; 
-            width: auto;
-            display: block;
-            image-rendering: auto;
-            -ms-interpolation-mode: bicubic;
-            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
-        }
-        .topbar .logo-mark span { 
-            font-size: 18px;
-            font-weight: 800;
-            color: var(--text-dark);
-        }
-        .topnav { 
-            display: flex; 
-            align-items: center; 
-            gap: 6px; 
-            flex-wrap: wrap; 
-        }
-        .topnav a {
-            color: var(--steel);
-            text-decoration: none;
-            font-size: 14px;
-            font-weight: 600;
-            padding: 7px 16px;
-            border-radius: 10px;
-            transition: all 0.3s;
-            background: transparent;
-        }
-        .topnav a:hover { 
-            color: var(--primary); 
-            background: rgba(33, 115, 70, 0.08);
-        }
-        .topnav a.active { 
-            color: #fff;
-            background: var(--primary);
-            box-shadow: 0 4px 15px rgba(33, 115, 70, 0.3);
-        }
-        .right { 
-            display: flex; 
-            align-items: center; 
-            gap: 12px; 
-            flex-wrap: wrap; 
-            font-size: 13px; 
-            color: var(--steel); 
-        }
-        .live-chip { 
-            display: flex; 
-            align-items: center; 
-            gap: 6px; 
-            background: rgba(33, 115, 70, 0.1); 
-            padding: 4px 12px; 
-            border-radius: 20px; 
-            font-size: 12px; 
-            color: var(--primary); 
-            font-weight: 600; 
-        }
-        .live-dot { 
-            width: 6px; 
-            height: 6px; 
-            border-radius: 50%; 
-            background: var(--good); 
-            animation: blink 1.5s infinite; 
-        }
-        @keyframes blink { 
-            0%, 100% { opacity: 1; } 
-            50% { opacity: 0.3; } 
-        }
-        .logout { 
-            color: var(--steel); 
-            text-decoration: none; 
-            padding: 5px 14px; 
-            border-radius: 8px; 
-            transition: all 0.3s; 
-            background: rgba(255,255,255,0.5);
-            font-weight: 600;
-            font-size: 13px;
-        }
-        .logout:hover { 
-            background: rgba(220, 53, 69, 0.1); 
-            color: var(--bad);
-        }
-        .date-display { 
-            color: var(--text-dark); 
-            font-size: 13px; 
-            font-weight: 600;
-        }
-        .user-name {
-            color: var(--text-dark);
-            font-weight: 600;
-            font-size: 13px;
-        }
-        .admin-badge {
-            font-size: 9px;
-            background: var(--primary);
-            color: #fff;
-            padding: 2px 8px;
-            border-radius: 10px;
-            font-weight: 600;
-        }
-        
-        .container { 
-            position: relative;
-            z-index: 5;
-            max-width: 1200px; 
-            margin: 0 auto; 
-            padding: 30px; 
-        }
-        
+        .topbar .logo-mark { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: var(--primary-dark); }
+        .topbar .logo-mark img { height: 30px; width: auto; display: block; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1)); }
+        .topnav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .topnav a { color: var(--steel); text-decoration: none; font-size: 14px; font-weight: 600; padding: 7px 16px; border-radius: 10px; transition: all 0.3s; background: transparent; }
+        .topnav a:hover { color: var(--primary); background: rgba(33, 115, 70, 0.08); }
+        .topnav a.active { color: #fff; background: var(--primary); box-shadow: 0 4px 15px rgba(33, 115, 70, 0.3); }
+        .right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--steel); }
+        .live-chip { display: flex; align-items: center; gap: 6px; background: rgba(33, 115, 70, 0.1); padding: 4px 12px; border-radius: 20px; font-size: 12px; color: var(--primary); font-weight: 600; }
+        .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--good); animation: blink 1.5s infinite; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        .logout { color: var(--steel); text-decoration: none; padding: 5px 14px; border-radius: 8px; transition: all 0.3s; background: rgba(255,255,255,0.5); font-weight: 600; font-size: 13px; }
+        .logout:hover { background: rgba(220, 53, 69, 0.1); color: var(--bad); }
+        .date-display { color: var(--text-dark); font-size: 13px; font-weight: 600; }
+        .user-name { color: var(--text-dark); font-weight: 600; font-size: 13px; }
+        .admin-badge { font-size: 9px; background: var(--primary); color: #fff; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+
+        .container { position: relative; z-index: 5; max-width: 1200px; margin: 0 auto; padding: 30px; }
         .factory-card {
             background: var(--glass-bg);
             backdrop-filter: blur(20px);
@@ -236,49 +131,16 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             background: rgba(255,255,255,0.2);
         }
         .factory-card .left { display: flex; align-items: center; gap: 16px; }
-        .factory-card .left .icon { 
-            font-size: 32px; 
-            background: rgba(255,255,255,0.2);
-            padding: 10px;
-            border-radius: 14px;
-        }
-        .factory-card .left .info h3 { 
-            color: var(--steel); 
-            font-size: 13px; 
-            font-weight: 500; 
-        }
-        .factory-card .left .info .value { 
-            color: var(--text-dark); 
-            font-size: 34px; 
-            font-weight: 900; 
-        }
+        .factory-card .left .icon { font-size: 32px; background: rgba(255,255,255,0.2); padding: 10px; border-radius: 14px; }
+        .factory-card .left .info h3 { color: var(--steel); font-size: 13px; font-weight: 500; }
+        .factory-card .left .info .value { color: var(--text-dark); font-size: 34px; font-weight: 900; }
         .factory-card .right { display: flex; gap: 24px; flex-wrap: wrap; }
         .factory-card .right .stat { text-align: center; }
-        .factory-card .right .stat .label { 
-            color: var(--steel); 
-            font-size: 11px; 
-            font-weight: 500; 
-        }
-        .factory-card .right .stat .number { 
-            color: var(--text-dark); 
-            font-size: 20px; 
-            font-weight: 800; 
-        }
+        .factory-card .right .stat .label { color: var(--steel); font-size: 11px; font-weight: 500; }
+        .factory-card .right .stat .number { color: var(--text-dark); font-size: 20px; font-weight: 800; }
         
-        .section-title { 
-            font-size: 20px; 
-            font-weight: 800; 
-            color: var(--text-dark); 
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .section-title .sub { 
-            font-weight: 500; 
-            color: var(--steel); 
-            font-size: 14px; 
-        }
+        .section-title { font-size: 20px; font-weight: 800; color: var(--text-dark); margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
+        .section-title .sub { font-weight: 500; color: var(--steel); font-size: 14px; }
         
         .division-grid {
             display: grid;
@@ -302,91 +164,20 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             position: relative;
             overflow: hidden;
         }
-        .division-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: linear-gradient(135deg, rgba(33,115,70,0.05), transparent);
-            opacity: 0;
-            transition: opacity 0.4s ease;
-        }
-        .division-card:hover { 
-            transform: translateY(-6px) scale(1.02); 
-            box-shadow: 0 16px 48px rgba(0,0,0,0.12);
-            border-color: rgba(33,115,70,0.3);
-            background: rgba(255,255,255,0.25);
-        }
+        .division-card:hover { transform: translateY(-6px) scale(1.02); box-shadow: 0 16px 48px rgba(0,0,0,0.12); border-color: rgba(33,115,70,0.3); background: rgba(255,255,255,0.25); }
         .division-card:hover::before { opacity: 1; }
-        .division-card .icon { 
-            font-size: 38px; 
-            margin-bottom: 8px;
-            display: block;
-            transition: transform 0.4s ease;
-        }
+        .division-card .icon { font-size: 38px; margin-bottom: 8px; display: block; transition: transform 0.4s ease; }
         .division-card:hover .icon { transform: scale(1.1) rotate(-5deg); }
-        .division-card .name { 
-            font-size: 18px; 
-            font-weight: 800; 
-            color: var(--text-dark); 
-            margin-bottom: 4px;
-        }
-        .division-card .units-info { 
-            color: var(--steel); 
-            font-size: 13px; 
-            font-weight: 500;
-            margin-bottom: 8px; 
-        }
-        .division-card .units-info strong { 
-            color: var(--text-dark); 
-            font-weight: 700;
-        }
-        .division-card .efficiency { 
-            display: flex; 
-            align-items: baseline; 
-            justify-content: center;
-            gap: 6px; 
-        }
-        .division-card .efficiency .value { 
-            font-size: 30px; 
-            font-weight: 900; 
-            color: var(--primary); 
-        }
-        .division-card .efficiency .label { 
-            color: var(--steel); 
-            font-size: 12px; 
-            font-weight: 500;
-        }
-        .division-card .efficiency .no-data { 
-            color: #b0b8c4; 
-            font-size: 20px; 
-            font-weight: 700;
-        }
-        .division-card .progress-bar { 
-            width: 100%; 
-            height: 5px; 
-            background: rgba(0,0,0,0.06); 
-            border-radius: 4px; 
-            margin-top: 12px; 
-            overflow: hidden; 
-        }
-        .division-card .progress-bar .fill { 
-            height: 100%; 
-            border-radius: 4px; 
-            background: linear-gradient(90deg, var(--primary), #2d8f4e); 
-            transition: width 0.8s ease; 
-        }
-        .division-card .status-badge {
-            font-size: 10px;
-            padding: 2px 14px;
-            border-radius: 20px;
-            font-weight: 600;
-            display: inline-block;
-            margin-top: 8px;
-            transition: all 0.3s ease;
-        }
+        .division-card .name { font-size: 18px; font-weight: 800; color: var(--text-dark); margin-bottom: 4px; }
+        .division-card .units-info { color: var(--steel); font-size: 13px; font-weight: 500; margin-bottom: 8px; }
+        .division-card .units-info strong { color: var(--text-dark); font-weight: 700; }
+        .division-card .efficiency { display: flex; align-items: baseline; justify-content: center; gap: 6px; }
+        .division-card .efficiency .value { font-size: 30px; font-weight: 900; color: var(--primary); }
+        .division-card .efficiency .label { color: var(--steel); font-size: 12px; font-weight: 500; }
+        .division-card .efficiency .no-data { color: #b0b8c4; font-size: 20px; font-weight: 700; }
+        .division-card .progress-bar { width: 100%; height: 5px; background: rgba(0,0,0,0.06); border-radius: 4px; margin-top: 12px; overflow: hidden; }
+        .division-card .progress-bar .fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--primary), #2d8f4e); transition: width 0.8s ease; }
+        .division-card .status-badge { font-size: 10px; padding: 2px 14px; border-radius: 20px; font-weight: 600; display: inline-block; margin-top: 8px; transition: all 0.3s ease; }
         .status-active { background: rgba(33,115,70,0.15); color: var(--primary); }
         .status-inactive { background: rgba(0,0,0,0.05); color: #999; }
         
@@ -430,10 +221,7 @@ $factory_eff = getFactoryEfficiency($conn, $date);
             <?php endif; ?>
         </nav>
         <div class="right">
-            <span class="live-chip">
-                <span class="live-dot"></span>
-                <span id="live-clock">--:--</span>
-            </span>
+            <span class="live-chip"><span class="live-dot"></span><span id="live-clock">--:--</span></span>
             <span class="date-display"><?php echo date('M d, Y'); ?></span>
             <span class="user-name"><?php echo htmlspecialchars($_SESSION['full_name'] ?? $_SESSION['username']); ?></span>
             <?php if (isAdmin()): ?>
@@ -470,12 +258,7 @@ $factory_eff = getFactoryEfficiency($conn, $date);
         </div>
         <div class="division-grid">
             <?php 
-            $icons = [
-                'Shirt' => '👔',
-                'Trouser' => '👖',
-                'Coat' => '🧥',
-                'Assembly' => '🏭'
-            ];
+            $icons = ['Shirt' => '👔', 'Trouser' => '👖', 'Coat' => '🧥', 'Assembly' => '🏭'];
             foreach ($divisions as $div): 
                 $stats = $division_stats[$div['id']] ?? ['total_units' => 0, 'setup_units' => 0, 'efficiency' => 0, 'has_data' => false];
                 $eff_percent = min($stats['efficiency'], 100);

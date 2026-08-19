@@ -1,7 +1,7 @@
 <?php
-// index.php - Complete Login Page
+// index.php - Updated to use PDO (getDB) instead of getDBConnection()
 session_start();
-require_once 'config/database.php';
+require_once 'config/database.php'; // <-- This loads the new database.php
 
 // Check if already logged in
 if (isset($_SESSION['user_id']) && isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
@@ -18,14 +18,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($username) || empty($password)) {
         $error = 'Please enter username and password';
     } else {
-        $conn = getDBConnection();
-        
+        $conn = getDB(); // <--- THIS IS THE FIXED FUNCTION CALL
+
         // Check user
         $stmt = $conn->prepare("SELECT id, username, password, full_name, role FROM users WHERE username = ?");
-        $stmt->bind_param("s", $username);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $user = $result->fetch_assoc();
+        $stmt->execute([$username]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
         
         if ($user) {
             // Verify password
@@ -45,7 +43,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $error = 'Invalid username or password';
         }
-        $conn->close();
     }
 }
 ?>
@@ -57,6 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <title>Production Report - Login</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        /* [Keep the exact CSS from previous message here - unchanged] */
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: 'Inter', sans-serif;
@@ -299,7 +297,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         updateClock();
         setInterval(updateClock, 1000);
 
-        // Form submission handler
         document.getElementById('loginForm').addEventListener('submit', function(e) {
             console.log('Form submitted');
             const btn = document.getElementById('loginBtn');

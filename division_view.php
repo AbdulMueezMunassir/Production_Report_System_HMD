@@ -1,88 +1,53 @@
 <?php
-// division_view.php - EXACT LAYOUT + DHU UNDER MATCH OUT + INSTANT DYNAMIC HOURS
-require_once 'config/database.php';
-require_once 'includes/auth.php';
-require_once 'includes/functions.php';
+// division_view.php - FINAL VERSION
+require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/functions.php';
 
 requireLogin();
 
-$conn = getDBConnection();
+$conn = getDB();
 $division_id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 $date = isset($_GET['date']) ? $_GET['date'] : date('Y-m-d');
-$work_hours = isset($_GET['hours']) ? (int)$_GET['hours'] : 10;
 
-// Get division info
+$settings = getDateSettings($date);
+if (!$settings) {
+    saveDateSettings($date, 10, 0.90, $_SESSION['user_id']);
+    $settings = getDateSettings($date);
+}
+$work_hours = $settings['working_hours'];
+$targetEfficiency = $settings['target_efficiency'];
+
 $div_sql = "SELECT * FROM divisions WHERE id = ?";
 $stmt = $conn->prepare($div_sql);
-$stmt->bind_param("i", $division_id);
-$stmt->execute();
-$division = $stmt->get_result()->fetch_assoc();
+$stmt->execute([$division_id]);
+$division = $stmt->fetch(PDO::FETCH_ASSOC);
 
-if (!$division) {
-    header('Location: dashboard.php');
-    exit;
-}
+if (!$division) { header('Location: dashboard.php'); exit; }
 
-// Get components
+$is_assembly = ($division['type'] === 'assembly');
 $components = getComponents($conn, $division_id);
 $component_data = [];
-$grand_day_ttl = 0;
-$grand_ern_min = 0;
-$grand_eff = 0;
-$row_count = 0;
-$dhu_data = [];
 
 foreach ($components as $comp) {
     if ($comp['is_match_out']) continue;
     $data = getReportData($conn, $division_id, $comp['id'], $date);
-    
-    // Update worked hours with dynamic value
     if (!empty($data)) {
         $data['worked_hours'] = $work_hours;
-        // Recalculate available minutes
-        $data['available_minutes'] = ($data['plan_hours'] ?? 0) * $work_hours * 60;
-        // Recalculate acvd_eff
-        $day_total = 0;
-        for ($h = 1; $h <= 11; $h++) {
-            $day_total += $data["hour_$h"] ?? 0;
-        }
+        $data['day_forecast'] = calculateDayForecast($data['unit_carder'], $work_hours, $data['unit_smv'], $targetEfficiency);
+        $data['available_minutes'] = calculateAvailableMinutes($data['unit_carder'], $data['plan_hours']);
+        $data['plan_minutes'] = calculatePlanMinutes($data['day_forecast'], $data['unit_smv']);
+        $data['plan_eff'] = calculatePlanEfficiency($data['plan_minutes'], $data['available_minutes']);
+        $data['target_100'] = calculateTarget100($data['unit_carder'], $data['unit_smv']);
+        $day_total = calculateDayTotal($data, $work_hours);
         $data['day_total'] = $day_total;
-        $data['acvd_eff'] = $data['available_minutes'] > 0 ? 
-            ($day_total * ($data['ttl_sam_pc'] ?? 0) / $data['available_minutes']) * 100 : 0;
+        $data['ern_minutes'] = calculateEarnedMinutes($data['day_total'], $data['unit_smv']);
+        $data['acvd_eff'] = calculateAchievedEfficiency($data['ern_minutes'], $data['available_minutes'], $data['plan_hours'], $data['worked_hours']);
     }
-    
     $component_data[$comp['id']] = $data;
-    
-    $day_total = 0;
-    for ($h = 1; $h <= 11; $h++) {
-        $day_total += $data["hour_$h"] ?? 0;
-    }
-    $grand_day_ttl += $day_total;
-    $ern_minutes = $day_total * ($data['ttl_sam_pc'] ?? 0);
-    $grand_ern_min += $ern_minutes;
-    
-    $acvd_eff = $data['acvd_eff'] ?? 0;
-    $grand_eff += $acvd_eff;
-    $row_count++;
-    
-    $dhu_data[$comp['id']] = ($row_count % 2 == 0 && $acvd_eff > 0) ? round(rand(1, 5), 1) : '-';
 }
 
-// Update Match Out with dynamic hours
-$match_out = calculateMatchOut($conn, $division_id, $date);
-$match_out['worked_hours'] = $work_hours;
-$match_out['available_minutes'] = ($match_out['plan_hours'] ?? 0) * $work_hours * 60;
-
-$stats = getDivisionStats($conn, $division_id, $date);
-$match_out_dhu = ($row_count > 0 && $match_out['ttl_sam_pc'] > 0) ? round(rand(1, 5), 1) : '-';
-$is_assembly = ($division['type'] === 'assembly');
-
-// Calculate DHU for each assembly component
-$assembly_dhu = [];
-foreach ($components as $comp) {
-    if ($comp['is_match_out']) continue;
-    $assembly_dhu[$comp['id']] = ($row_count > 0) ? round(rand(1, 5), 1) : '-';
-}
+$stats = getDivisionStats($conn, $division_id, $date, $work_hours);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -121,23 +86,8 @@ foreach ($components as $comp) {
             color: var(--text);
             position: relative;
         }
-        
-        .bg-shapes {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            z-index: 0;
-            pointer-events: none;
-        }
-        .shape {
-            position: absolute;
-            border-radius: 50%;
-            opacity: 0.08;
-            animation: float 25s infinite ease-in-out;
-        }
+        .bg-shapes { position: fixed; top: 0; left: 0; width: 100%; height: 100%; overflow: hidden; z-index: 0; pointer-events: none; }
+        .shape { position: absolute; border-radius: 50%; opacity: 0.08; animation: float 25s infinite ease-in-out; }
         .shape-1 { width: 500px; height: 500px; background: var(--primary); top: -150px; right: -150px; }
         .shape-2 { width: 300px; height: 300px; background: var(--primary); bottom: -100px; left: -100px; animation-delay: -8s; }
         .shape-3 { width: 200px; height: 200px; background: var(--primary); top: 50%; left: 50%; transform: translate(-50%, -50%); animation-delay: -15s; }
@@ -147,22 +97,7 @@ foreach ($components as $comp) {
             50% { transform: translate(-40px, 40px) scale(0.9); }
             75% { transform: translate(30px, 30px) scale(1.05); }
         }
-        
-        .topbar {
-            position: relative;
-            z-index: 10;
-            background: var(--glass-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border-bottom: 1px solid var(--glass-border);
-            padding: 10px 30px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 10px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.05);
-        }
+        .topbar { position: relative; z-index: 10; background: var(--glass-bg); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-bottom: 1px solid var(--glass-border); padding: 10px 30px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); }
         .topbar .logo-mark { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: var(--primary-dark); }
         .topbar .logo-mark img { height: 30px; width: auto; display: block; }
         .topnav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -180,61 +115,16 @@ foreach ($components as $comp) {
         .admin-badge { font-size: 9px; background: var(--primary); color: #fff; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
 
         .container { position: relative; z-index: 5; max-width: 100%; padding: 20px 30px; }
-        
-        .page-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
-            gap: 12px;
-        }
+        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
         .page-header .title h2 { font-size: 20px; font-weight: 800; color: var(--text-dark); }
         .page-header .title .sub { color: var(--steel); font-size: 14px; font-weight: 500; margin-top: 4px; }
         .page-header .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-        .page-header .controls input[type="date"] {
-            padding: 7px 12px;
-            border: 1px solid var(--glass-border);
-            border-radius: 8px;
-            font-size: 13px;
-            font-weight: 500;
-            font-family: 'Inter', sans-serif;
-            background: rgba(255,255,255,0.7);
-            color: var(--text-dark);
-        }
+        .page-header .controls input[type="date"] { padding: 7px 12px; border: 1px solid var(--glass-border); border-radius: 8px; font-size: 13px; font-weight: 500; font-family: 'Inter', sans-serif; background: rgba(255,255,255,0.7); color: var(--text-dark); }
         .page-header .controls input[type="date"]:focus { outline: none; border-color: var(--primary); }
-        .page-header .controls .hours-input {
-            padding: 7px 12px;
-            border: 1px solid var(--glass-border);
-            border-radius: 8px;
-            font-size: 13px;
-            font-weight: 600;
-            font-family: 'Inter', sans-serif;
-            background: rgba(255,255,255,0.7);
-            color: var(--text-dark);
-            width: 70px;
-            text-align: center;
-        }
+        .page-header .controls .hours-input { padding: 7px 12px; border: 1px solid var(--glass-border); border-radius: 8px; font-size: 13px; font-weight: 600; font-family: 'Inter', sans-serif; background: rgba(255,255,255,0.7); color: var(--text-dark); width: 70px; text-align: center; }
         .page-header .controls .hours-input:focus { outline: none; border-color: var(--primary); }
-        .page-header .controls .hours-label {
-            font-size: 13px;
-            font-weight: 600;
-            color: var(--text-dark);
-        }
-        .btn {
-            padding: 7px 16px;
-            border: none;
-            border-radius: 8px;
-            font-weight: 600;
-            font-size: 13px;
-            cursor: pointer;
-            transition: all 0.3s;
-            font-family: 'Inter', sans-serif;
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-        }
+        .page-header .controls .hours-label { font-size: 13px; font-weight: 600; color: var(--text-dark); }
+        .btn { padding: 7px 16px; border: none; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer; transition: all 0.3s; font-family: 'Inter', sans-serif; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
         .btn-back { background: rgba(255,255,255,0.5); color: var(--text-dark); border: 1px solid var(--glass-border); }
         .btn-back:hover { background: rgba(255,255,255,0.8); }
         .btn-refresh { background: rgba(255,255,255,0.5); color: var(--text-dark); border: 1px solid var(--glass-border); }
@@ -244,59 +134,13 @@ foreach ($components as $comp) {
         .btn-export { background: rgba(255,255,255,0.5); color: var(--text-dark); border: 1px solid var(--glass-border); }
         .btn-export:hover { background: rgba(255,255,255,0.8); }
         
-        .table-container {
-            background: var(--glass-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid var(--glass-border);
-            border-radius: var(--border-radius);
-            overflow: hidden;
-            box-shadow: var(--shadow);
-            overflow-x: auto;
-            margin-bottom: 16px;
-        }
-        .table-title {
-            padding: 12px 20px;
-            background: rgba(255,255,255,0.2);
-            border-bottom: 2px solid var(--primary);
-            font-weight: 700;
-            font-size: 14px;
-            color: var(--text-dark);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 10px;
-        }
+        .table-container { background: var(--glass-bg); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid var(--glass-border); border-radius: var(--border-radius); overflow: hidden; box-shadow: var(--shadow); overflow-x: auto; margin-bottom: 16px; }
+        .table-title { padding: 12px 20px; background: rgba(255,255,255,0.2); border-bottom: 2px solid var(--primary); font-weight: 700; font-size: 14px; color: var(--text-dark); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
         .table-title .badge-info { font-weight: 500; font-size: 13px; color: var(--steel); }
         
-        .excel-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 11px;
-            min-width: 1850px;
-        }
-        .excel-table th {
-            background: rgba(255,255,255,0.3);
-            border: 1px solid var(--glass-border);
-            padding: 6px 4px;
-            text-align: center;
-            font-weight: 700;
-            color: var(--text-dark);
-            font-size: 10px;
-            white-space: nowrap;
-            position: sticky;
-            top: 0;
-            z-index: 10;
-        }
-        .excel-table td {
-            border: 1px solid var(--glass-border);
-            padding: 4px 3px;
-            text-align: center;
-            white-space: nowrap;
-            font-size: 11px;
-            font-weight: 500;
-        }
+        .excel-table { width: 100%; border-collapse: collapse; font-size: 11px; min-width: 1850px; }
+        .excel-table th { background: rgba(255,255,255,0.3); border: 1px solid var(--glass-border); padding: 6px 4px; text-align: center; font-weight: 700; color: var(--text-dark); font-size: 10px; white-space: nowrap; position: sticky; top: 0; z-index: 10; }
+        .excel-table td { border: 1px solid var(--glass-border); padding: 4px 3px; text-align: center; white-space: nowrap; font-size: 11px; font-weight: 500; }
         .excel-table tr:hover { background: rgba(255,255,255,0.2); }
         .excel-table .editable-yellow { background: rgba(255, 235, 59, 0.3); }
         .excel-table .editable-yellow input { background: rgba(255, 235, 59, 0.3); }
@@ -307,61 +151,16 @@ foreach ($components as $comp) {
         .excel-table .dhu-row td { background: var(--dhu-bg); color: var(--dhu-red); border-color: rgba(220, 53, 69, 0.2); }
         .excel-table .total-row { background: rgba(33, 150, 243, 0.1); font-weight: 700; }
         .excel-table .total-row td { background: rgba(33, 150, 243, 0.1); }
-        .excel-table .assembly-dhu-row { background: var(--dhu-bg); color: var(--dhu-red); font-weight: 600; }
-        .excel-table .assembly-dhu-row td { background: var(--dhu-bg); color: var(--dhu-red); border-color: rgba(220, 53, 69, 0.15); }
         
-        .excel-table .editable-yellow input {
-            width: 100%;
-            border: none;
-            background: transparent;
-            text-align: center;
-            padding: 3px 2px;
-            font-size: 11px;
-            font-weight: 600;
-            font-family: 'Inter', sans-serif;
-            min-width: 40px;
-        }
-        .excel-table .editable-yellow input:focus {
-            outline: 2px solid var(--primary);
-            outline-offset: -2px;
-            background: rgba(255,255,255,0.9);
-        }
+        .excel-table .editable-yellow input { width: 100%; border: none; background: transparent; text-align: center; padding: 3px 2px; font-size: 11px; font-weight: 600; font-family: 'Inter', sans-serif; min-width: 40px; }
+        .excel-table .editable-yellow input:focus { outline: 2px solid var(--primary); outline-offset: -2px; background: rgba(255,255,255,0.9); }
         .excel-table .editable-yellow input:hover { background: rgba(255, 235, 59, 0.5); }
-        .excel-table .edit-link {
-            color: var(--primary);
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 10px;
-            cursor: pointer;
-            margin-left: 4px;
-        }
+        .excel-table .edit-link { color: var(--primary); text-decoration: none; font-weight: 600; font-size: 10px; cursor: pointer; margin-left: 4px; }
         .excel-table .edit-link:hover { text-decoration: underline; }
         
-        .scroll-indicator {
-            text-align: center;
-            padding: 6px;
-            background: rgba(255, 193, 7, 0.1);
-            color: #856404;
-            font-size: 11px;
-            font-weight: 500;
-            border-bottom: 1px solid rgba(255, 193, 7, 0.2);
-        }
+        .scroll-indicator { text-align: center; padding: 6px; background: rgba(255, 193, 7, 0.1); color: #856404; font-size: 11px; font-weight: 500; border-bottom: 1px solid rgba(255, 193, 7, 0.2); }
         
-        .weather-bar {
-            display: flex;
-            justify-content: flex-end;
-            align-items: center;
-            gap: 16px;
-            padding: 8px 30px;
-            background: var(--glass-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border-top: 1px solid var(--glass-border);
-            font-size: 13px;
-            color: var(--steel);
-            margin-top: 16px;
-            font-weight: 500;
-        }
+        .weather-bar { display: flex; justify-content: flex-end; align-items: center; gap: 16px; padding: 8px 30px; background: var(--glass-bg); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-top: 1px solid var(--glass-border); font-size: 13px; color: var(--steel); margin-top: 16px; font-weight: 500; }
         .weather-bar .temp { font-weight: 700; color: var(--text-dark); }
         .weather-bar .weather-icon { font-size: 18px; }
         
@@ -395,7 +194,7 @@ foreach ($components as $comp) {
         </div>
         <nav class="topnav">
             <a href="dashboard.php">Dashboard</a>
-            <a href="division_view.php?id=<?php echo $division_id; ?>&date=<?php echo $date; ?>&hours=<?php echo $work_hours; ?>" class="active">Production</a>
+            <a href="division_view.php?id=<?php echo $division_id; ?>&date=<?php echo $date; ?>" class="active">Production</a>
         </nav>
         <div class="right">
             <span class="live-chip"><span class="live-dot"></span><span id="live-clock">--:--</span></span>
@@ -442,7 +241,7 @@ foreach ($components as $comp) {
                         <th style="min-width:55px;">Unit</th>
                         <th style="min-width:65px;">Ttl SAM/Pc</th>
                         <th style="min-width:65px;">Unit SMV</th>
-                        <th style="min-width:65px;">Day Forecast</th>
+                        <th style="min-width:65px;">Day Forecast 90%</th>
                         <th style="min-width:65px;">Unit Carder</th>
                         <th style="min-width:65px;">Plan Hours</th>
                         <th style="min-width:65px;">Worked Hours</th>
@@ -450,17 +249,9 @@ foreach ($components as $comp) {
                         <th style="min-width:65px;">Plan Minutes</th>
                         <th style="min-width:55px;">Plan Eff</th>
                         <th style="min-width:60px;">100% Target</th>
-                        <th style="min-width:40px;">1st</th>
-                        <th style="min-width:40px;">2nd</th>
-                        <th style="min-width:40px;">3rd</th>
-                        <th style="min-width:40px;">4th</th>
-                        <th style="min-width:40px;">5th</th>
-                        <th style="min-width:40px;">6th</th>
-                        <th style="min-width:40px;">7th</th>
-                        <th style="min-width:40px;">8th</th>
-                        <th style="min-width:40px;">9th</th>
-                        <th style="min-width:40px;">10th</th>
-                        <th style="min-width:40px;">11th</th>
+                        <?php for ($h = 1; $h <= $work_hours; $h++): ?>
+                        <th style="min-width:40px;"><?php echo $h; ?>st</th>
+                        <?php endfor; ?>
                         <th style="min-width:55px;">Day Ttl</th>
                         <th style="min-width:65px;">Ern Minutes</th>
                         <th style="min-width:65px;">Acvd Eff</th>
@@ -468,239 +259,97 @@ foreach ($components as $comp) {
                 </thead>
                 <tbody>
                     <?php if (empty($components)): ?>
-                    <tr><td colspan="26" style="padding:30px; color:var(--steel); text-align:center; font-weight:500;">No components found.</td></tr>
+                    <tr><td colspan="<?php echo 12 + $work_hours + 3; ?>" style="padding:30px; color:var(--steel); text-align:center; font-weight:500;">No components found.</td></tr>
                     <?php else: ?>
+                    
+                    <?php if (!$is_assembly): ?>
+                    <!-- COMPONENT ROWS -->
                     <?php 
                     $total_day_ttl = 0;
                     $total_ern_min = 0;
                     $total_eff = 0;
                     $row_idx = 0;
-                    $total_dhu = 0;
-                    $dhu_count = 0;
                     
                     foreach ($components as $comp):
                         if ($comp['is_match_out']) continue;
                         $row_idx++;
                         $data = $component_data[$comp['id']] ?? [];
-                        $day_total = 0;
-                        for ($h = 1; $h <= 11; $h++) {
-                            $day_total += $data["hour_$h"] ?? 0;
-                        }
-                        $ern_minutes = $day_total * ($data['ttl_sam_pc'] ?? 0);
-                        $available_minutes = $data['available_minutes'] ?? 0;
-                        $acvd_eff = $available_minutes > 0 ? ($ern_minutes / $available_minutes) * 100 : 0;
-                        $plan_eff = $available_minutes > 0 ? (($data['day_forecast'] ?? 0) * ($data['unit_carder'] ?? 0) / $available_minutes) * 100 : 0;
-                        $target_100 = ($data['unit_carder'] ?? 0) > 0 ? (($data['plan_hours'] ?? 0) / ($data['unit_carder'] ?? 0)) * 60 : 0;
+                        
+                        $day_total = $data['day_total'] ?? 0;
+                        $ern_minutes = $data['ern_minutes'] ?? 0;
+                        $acvd_eff = $data['acvd_eff'] ?? 0;
                         
                         $total_day_ttl += $day_total;
                         $total_ern_min += $ern_minutes;
                         $total_eff += $acvd_eff;
-                        
-                        $dhu_value = $dhu_data[$comp['id']] ?? '-';
-                        if ($dhu_value !== '-') { $total_dhu += (float)$dhu_value; $dhu_count++; }
-                        
-                        if ($is_assembly):
                     ?>
-                    <tr>
+                    <tr class="component-row" data-row-id="<?php echo $comp['id']; ?>">
                         <td style="text-align:left; padding-left:8px;"><?php echo htmlspecialchars($division['name']); ?></td>
-                        <td>
-                            <?php echo htmlspecialchars($comp['name']); ?>
-                            <span class="edit-link" onclick="editRow(this)">Edit</span>
-                        </td>
-                        <td class="editable-yellow">
-                            <input type="number" step="0.01" class="field-input" 
-                                   data-component="<?php echo $comp['id']; ?>"
-                                   data-field="ttl_sam_pc"
-                                   value="<?php echo $data['ttl_sam_pc'] ?? 0; ?>"
-                                   onchange="updateField(this, '<?php echo $comp['id']; ?>', 'ttl_sam_pc')">
-                        </td>
-                        <td class="editable-yellow">
-                            <input type="number" step="0.01" class="field-input" 
-                                   data-component="<?php echo $comp['id']; ?>"
-                                   data-field="unit_smv"
-                                   value="<?php echo $data['unit_smv'] ?? 0; ?>"
-                                   onchange="updateField(this, '<?php echo $comp['id']; ?>', 'unit_smv')">
-                        </td>
-                        <td class="editable-yellow">
-                            <input type="number" step="0.01" class="field-input" 
-                                   data-component="<?php echo $comp['id']; ?>"
-                                   data-field="day_forecast"
-                                   value="<?php echo $data['day_forecast'] ?? 0; ?>"
-                                   onchange="updateField(this, '<?php echo $comp['id']; ?>', 'day_forecast')">
-                        </td>
-                        <td class="editable-yellow">
-                            <input type="number" class="field-input" 
-                                   data-component="<?php echo $comp['id']; ?>"
-                                   data-field="unit_carder"
-                                   value="<?php echo $data['unit_carder'] ?? 0; ?>"
-                                   onchange="updateField(this, '<?php echo $comp['id']; ?>', 'unit_carder')">
-                        </td>
-                        <td class="editable-yellow">
-                            <input type="number" step="0.5" class="field-input" 
-                                   data-component="<?php echo $comp['id']; ?>"
-                                   data-field="plan_hours"
-                                   value="<?php echo $data['plan_hours'] ?? 0; ?>"
-                                   onchange="updateField(this, '<?php echo $comp['id']; ?>', 'plan_hours')">
-                        </td>
-                        <td class="editable-yellow">
-                            <input type="number" step="0.5" class="field-input" 
-                                   data-component="<?php echo $comp['id']; ?>"
-                                   data-field="worked_hours"
-                                   value="<?php echo $work_hours; ?>"
-                                   onchange="updateField(this, '<?php echo $comp['id']; ?>', 'worked_hours')">
-                        </td>
-                        <td class="calculated"><?php echo number_format($available_minutes, 0); ?></td>
-                        <td class="calculated"><?php echo number_format(($data['day_forecast'] ?? 0) * ($data['unit_carder'] ?? 0), 0); ?></td>
-                        <td class="calculated" style="font-weight:700;"><?php echo number_format($plan_eff, 1); ?>%</td>
-                        <td class="calculated" style="font-weight:700;"><?php echo number_format($target_100, 0); ?></td>
-                        <?php for ($h = 1; $h <= 11; $h++): ?>
-                        <td class="editable-yellow">
-                            <input type="number" class="hour-input" 
-                                   data-component="<?php echo $comp['id']; ?>"
-                                   data-hour="<?php echo $h; ?>"
-                                   value="<?php echo $data["hour_$h"] ?? 0; ?>"
-                                   onchange="updateHour(this, '<?php echo $comp['id']; ?>', <?php echo $h; ?>)">
-                        </td>
+                        <td><?php echo htmlspecialchars($comp['name']); ?> <span class="edit-link" onclick="editRow(this)">Edit</span></td>
+                        <td class="editable-yellow"><input type="number" step="0.01" class="field-input" oninput="recalcAll(this)" data-component="<?php echo $comp['id']; ?>" data-field="ttl_sam_pc" value="<?php echo $data['ttl_sam_pc'] ?? 0; ?>" onchange="updateField(this, '<?php echo $comp['id']; ?>', 'ttl_sam_pc')"></td>
+                        <td class="editable-yellow"><input type="number" step="0.01" class="field-input" oninput="recalcAll(this)" data-component="<?php echo $comp['id']; ?>" data-field="unit_smv" value="<?php echo $data['unit_smv'] ?? 0; ?>" onchange="updateField(this, '<?php echo $comp['id']; ?>', 'unit_smv')"></td>
+                        <td class="calculated"><?php echo number_format($data['day_forecast'] ?? 0, 0); ?></td>
+                        <td class="editable-yellow"><input type="number" class="field-input" oninput="recalcAll(this)" data-component="<?php echo $comp['id']; ?>" data-field="unit_carder" value="<?php echo $data['unit_carder'] ?? 0; ?>" onchange="updateField(this, '<?php echo $comp['id']; ?>', 'unit_carder')"></td>
+                        <td class="editable-yellow"><input type="number" step="0.5" class="field-input" oninput="recalcAll(this)" data-component="<?php echo $comp['id']; ?>" data-field="plan_hours" value="<?php echo $data['plan_hours'] ?? 0; ?>" onchange="updateField(this, '<?php echo $comp['id']; ?>', 'plan_hours')"></td>
+                        <td class="editable-yellow"><input type="number" step="0.5" class="field-input" data-component="<?php echo $comp['id']; ?>" data-field="worked_hours" value="<?php echo $work_hours; ?>" onchange="updateField(this, '<?php echo $comp['id']; ?>', 'worked_hours')"></td>
+                        <td class="calculated"><?php echo number_format($data['available_minutes'] ?? 0, 0); ?></td>
+                        <td class="calculated"><?php echo number_format($data['plan_minutes'] ?? 0, 0); ?></td>
+                        <td class="calculated" style="font-weight:700;"><?php echo number_format(($data['plan_eff'] ?? 0) * 100, 1); ?>%</td>
+                        <td class="calculated" style="font-weight:700;"><?php echo number_format($data['target_100'] ?? 0, 0); ?></td>
+                        <?php for ($h = 1; $h <= $work_hours; $h++): ?>
+                        <td class="editable-yellow"><input type="number" class="hour-input" oninput="recalcAll(this)" data-component="<?php echo $comp['id']; ?>" data-hour="<?php echo $h; ?>" value="<?php echo $data["hour_$h"] ?? 0; ?>" onchange="updateHour(this, '<?php echo $comp['id']; ?>', <?php echo $h; ?>)"></td>
                         <?php endfor; ?>
                         <td class="calculated" style="font-weight:700;"><?php echo number_format($day_total, 0); ?></td>
                         <td class="calculated" style="font-weight:700;"><?php echo number_format($ern_minutes, 1); ?></td>
-                        <td class="calculated" style="font-weight:700; color:var(--primary);"><?php echo number_format($acvd_eff, 1); ?>%</td>
+                        <td class="calculated" style="font-weight:700; color:var(--primary);"><?php echo number_format($acvd_eff * 100, 1); ?>%</td>
                     </tr>
-                    <?php else: ?>
-                    <tr>
-                        <td style="text-align:left; padding-left:8px;"><?php echo htmlspecialchars($division['name']); ?></td>
-                        <td>
-                            <?php echo htmlspecialchars($comp['name']); ?>
-                            <span class="edit-link" onclick="editRow(this)">Edit</span>
-                        </td>
-                        <td class="editable-yellow">
-                            <input type="number" step="0.01" class="field-input" 
-                                   data-component="<?php echo $comp['id']; ?>"
-                                   data-field="ttl_sam_pc"
-                                   value="<?php echo $data['ttl_sam_pc'] ?? 0; ?>"
-                                   onchange="updateField(this, '<?php echo $comp['id']; ?>', 'ttl_sam_pc')">
-                        </td>
-                        <td class="editable-yellow">
-                            <input type="number" step="0.01" class="field-input" 
-                                   data-component="<?php echo $comp['id']; ?>"
-                                   data-field="unit_smv"
-                                   value="<?php echo $data['unit_smv'] ?? 0; ?>"
-                                   onchange="updateField(this, '<?php echo $comp['id']; ?>', 'unit_smv')">
-                        </td>
-                        <td class="editable-yellow">
-                            <input type="number" step="0.01" class="field-input" 
-                                   data-component="<?php echo $comp['id']; ?>"
-                                   data-field="day_forecast"
-                                   value="<?php echo $data['day_forecast'] ?? 0; ?>"
-                                   onchange="updateField(this, '<?php echo $comp['id']; ?>', 'day_forecast')">
-                        </td>
-                        <td class="editable-yellow">
-                            <input type="number" class="field-input" 
-                                   data-component="<?php echo $comp['id']; ?>"
-                                   data-field="unit_carder"
-                                   value="<?php echo $data['unit_carder'] ?? 0; ?>"
-                                   onchange="updateField(this, '<?php echo $comp['id']; ?>', 'unit_carder')">
-                        </td>
-                        <td class="editable-yellow">
-                            <input type="number" step="0.5" class="field-input" 
-                                   data-component="<?php echo $comp['id']; ?>"
-                                   data-field="plan_hours"
-                                   value="<?php echo $data['plan_hours'] ?? 0; ?>"
-                                   onchange="updateField(this, '<?php echo $comp['id']; ?>', 'plan_hours')">
-                        </td>
-                        <td class="editable-yellow">
-                            <input type="number" step="0.5" class="field-input" 
-                                   data-component="<?php echo $comp['id']; ?>"
-                                   data-field="worked_hours"
-                                   value="<?php echo $work_hours; ?>"
-                                   onchange="updateField(this, '<?php echo $comp['id']; ?>', 'worked_hours')">
-                        </td>
-                        <td class="calculated"><?php echo number_format($available_minutes, 0); ?></td>
-                        <td class="calculated"><?php echo number_format(($data['day_forecast'] ?? 0) * ($data['unit_carder'] ?? 0), 0); ?></td>
-                        <td class="calculated" style="font-weight:700;"><?php echo number_format($plan_eff, 1); ?>%</td>
-                        <td class="calculated" style="font-weight:700;"><?php echo number_format($target_100, 0); ?></td>
-                        <?php for ($h = 1; $h <= 11; $h++): ?>
-                        <td class="editable-yellow">
-                            <input type="number" class="hour-input" 
-                                   data-component="<?php echo $comp['id']; ?>"
-                                   data-hour="<?php echo $h; ?>"
-                                   value="<?php echo $data["hour_$h"] ?? 0; ?>"
-                                   onchange="updateHour(this, '<?php echo $comp['id']; ?>', <?php echo $h; ?>)">
-                        </td>
-                        <?php endfor; ?>
-                        <td class="calculated" style="font-weight:700;"><?php echo number_format($day_total, 0); ?></td>
-                        <td class="calculated" style="font-weight:700;"><?php echo number_format($ern_minutes, 1); ?></td>
-                        <td class="calculated" style="font-weight:700; color:var(--primary);"><?php echo number_format($acvd_eff, 1); ?>%</td>
-                    </tr>
-                    <?php endif; ?>
                     <?php endforeach; ?>
                     
-                    <!-- Match Out Row -->
-                    <tr class="match-out-row">
+                    <!-- MATCH OUT ROW -->
+                    <tr class="match-out-row" id="match-out-row">
                         <td colspan="2" style="text-align:right; padding-right:12px; font-weight:700;">Match Out</td>
-                        <td style="font-weight:700;"><?php echo number_format($match_out['ttl_sam_pc'] ?? 0, 2); ?></td>
-                        <td style="font-weight:700;"><?php echo number_format($match_out['unit_smv'] ?? 0, 2); ?></td>
-                        <td style="font-weight:700;"><?php echo number_format($match_out['day_forecast'] ?? 0, 0); ?></td>
-                        <td style="font-weight:700;"><?php echo number_format($match_out['unit_carder'] ?? 0, 0); ?></td>
-                        <td style="font-weight:700;"><?php echo number_format($match_out['plan_hours'] ?? 0, 1); ?></td>
-                        <td style="font-weight:700;"><?php echo number_format($work_hours, 1); ?></td>
-                        <td class="calculated" style="font-weight:700;"><?php echo number_format(($match_out['plan_hours'] ?? 0) * $work_hours * 60, 0); ?></td>
-                        <td class="calculated" style="font-weight:700;"><?php echo number_format(($match_out['day_forecast'] ?? 0) * ($match_out['unit_carder'] ?? 0), 0); ?></td>
-                        <td class="calculated" style="font-weight:700;">
-                            <?php 
-                            $mo_plan_eff = (($match_out['plan_hours'] ?? 0) * $work_hours * 60) > 0 ? 
-                                (($match_out['day_forecast'] ?? 0) * ($match_out['unit_carder'] ?? 0) / (($match_out['plan_hours'] ?? 0) * $work_hours * 60)) * 100 : 0;
-                            echo number_format($mo_plan_eff, 1); ?>%
-                        </td>
-                        <td class="calculated" style="font-weight:700;">
-                            <?php 
-                            $mo_target = ($match_out['unit_carder'] ?? 0) > 0 ? 
-                                (($match_out['plan_hours'] ?? 0) / ($match_out['unit_carder'] ?? 0)) * 60 : 0;
-                            echo number_format($mo_target, 0); ?>
-                        </td>
-                        <?php 
-                        $mo_total = 0;
-                        for ($h = 1; $h <= 11; $h++): 
-                            $mo_total += $match_out['hours'][$h] ?? 0;
-                        ?>
-                        <td style="font-weight:700;"><?php echo number_format($match_out['hours'][$h] ?? 0, 0); ?></td>
+                        <td style="font-weight:700;">—</td>
+                        <td class="match-out-smv" style="font-weight:700;">0.00</td>
+                        <td class="match-out-forecast" style="font-weight:700;">0</td>
+                        <td class="match-out-carder" style="font-weight:700;">0</td>
+                        <td class="match-out-plan" style="font-weight:700;">0.0</td>
+                        <td class="match-out-worked" style="font-weight:700;">0.0</td>
+                        <td class="match-out-avail" style="font-weight:700;">0</td>
+                        <td class="match-out-planmin" style="font-weight:700;">0</td>
+                        <td class="match-out-planeff" style="font-weight:700;">0.0%</td>
+                        <td class="match-out-target" style="font-weight:700;">0</td>
+                        <?php for ($h = 1; $h <= $work_hours; $h++): ?>
+                        <td class="match-out-hour-<?php echo $h; ?>" style="font-weight:700;">0</td>
                         <?php endfor; ?>
-                        <td style="font-weight:700;"><?php echo number_format($mo_total, 0); ?></td>
-                        <td style="font-weight:700;"><?php echo number_format($mo_total * ($match_out['ttl_sam_pc'] ?? 0), 1); ?></td>
-                        <td style="font-weight:700; color:var(--primary);">
-                            <?php 
-                            $mo_acvd = (($match_out['plan_hours'] ?? 0) * $work_hours * 60) > 0 ? 
-                                (($mo_total * ($match_out['ttl_sam_pc'] ?? 0)) / (($match_out['plan_hours'] ?? 0) * $work_hours * 60)) * 100 : 0;
-                            echo number_format($mo_acvd, 1); ?>%
-                        </td>
+                        <td class="match-out-daytotal" style="font-weight:700;">0</td>
+                        <td class="match-out-ern" style="font-weight:700;">0.0</td>
+                        <td class="match-out-acvd" style="font-weight:700; color:var(--primary);">0.0%</td>
                     </tr>
 
-                    <!-- DHU ROW - EXACTLY UNDER MATCH OUT -->
-                    <?php if (!$is_assembly): ?>
+                    <!-- DHU ROW -->
                     <tr class="dhu-row">
-                        <td colspan="12" style="color:var(--dhu-red); font-weight:700; text-align:right; padding-right:12px;">
-                            DHU %
-                        </td>
-                        <td colspan="14" style="color:var(--dhu-red); font-weight:700; text-align:center;">
-                            <?php echo $match_out_dhu; ?>%
-                        </td>
+                        <td colspan="2" style="color:var(--dhu-red); font-weight:700; text-align:right; padding-right:12px;">DHU</td>
+                        <td style="color:var(--dhu-red); font-weight:700; text-align:center;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700; text-align:center;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700; text-align:center;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700; text-align:center;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700; text-align:center;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700; text-align:center;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700; text-align:center;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700; text-align:center;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700; text-align:center;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700; text-align:center;">—</td>
+                        <?php for ($h = 1; $h <= $work_hours; $h++): ?>
+                        <td class="editable-yellow" style="background:rgba(255,0,0,0.1);"><input type="number" class="dhu-hour-input" oninput="recalcAll(this)" data-hour="<?php echo $h; ?>" value="0" style="color:var(--dhu-red);"></td>
+                        <?php endfor; ?>
+                        <td class="dhu-daytotal" style="color:var(--dhu-red); font-weight:700;">0</td>
+                        <td style="color:var(--dhu-red); font-weight:700; text-align:center;">—</td>
+                        <td class="dhu-percent" style="color:var(--dhu-red); font-weight:700;">0.0%</td>
                     </tr>
-                    <?php else: ?>
-                    <!-- ASSEMBLY DHU ROW - EXACTLY UNDER MATCH OUT -->
-                    <tr class="assembly-dhu-row">
-                        <td style="font-weight:700; color:var(--dhu-red);">DHU %</td>
-                        <td colspan="10" style="color:var(--dhu-red); font-weight:700; text-align:center;">
-                            <?php echo $match_out_dhu; ?>%
-                        </td>
-                        <td colspan="14" style="color:var(--dhu-red); font-weight:700; text-align:center;">
-                            — 
-                        </td>
-                    </tr>
-                    <?php endif; ?>
                     
                     <!-- Total Row -->
                     <tr class="total-row">
-                        <td colspan="22" style="text-align:right; padding-right:12px; font-weight:700;">
+                        <td colspan="<?php echo 11 + $work_hours; ?>" style="text-align:right; padding-right:12px; font-weight:700;">
                             Total / <?php echo htmlspecialchars($division['name']); ?>:
                         </td>
                         <td style="font-weight:700;"><?php echo number_format($total_day_ttl, 0); ?></td>
@@ -712,6 +361,11 @@ foreach ($components as $comp) {
                             ?>
                         </td>
                     </tr>
+                    
+                    <?php else: ?>
+                    <!-- ASSEMBLY SECTION PLACEHOLDER -->
+                    <tr><td colspan="<?php echo 12 + $work_hours + 3; ?>" style="padding:30px; color:var(--steel); text-align:center; font-weight:500;">Assemble section layout will be added when you provide the assemble formulas.</td></tr>
+                    <?php endif; ?>
                     <?php endif; ?>
                 </tbody>
             </table>
@@ -745,54 +399,123 @@ foreach ($components as $comp) {
             window.location.href = '?id=<?php echo $division_id; ?>&date=' + date + '&hours=' + hours;
         }
 
-        // INSTANT RECALCULATION FOR DYNAMIC HOURS
-        function recalcAllDynamic() {
-            var hours = parseFloat($('#workHours').val()) || 0;
-            $('tr').each(function() {
+        function recalcAll(element) {
+            recalcComponentRows();
+            recalcMatchOut();
+            recalcDHU();
+        }
+
+        function recalcComponentRows() {
+            var hours = parseInt($('#workHours').val()) || 10;
+            var targetEff = 0.90;
+
+            $('.component-row').each(function() {
                 var $row = $(this);
-                var planHours = parseFloat($row.find('.field-input[data-field="plan_hours"]').val()) || 0;
-                var dayForecast = parseFloat($row.find('.field-input[data-field="day_forecast"]').val()) || 0;
-                var unitCarder = parseFloat($row.find('.field-input[data-field="unit_carder"]').val()) || 0;
-                var ttlSamPc = parseFloat($row.find('.field-input[data-field="ttl_sam_pc"]').val()) || 0;
-                
-                // Find calculated cells by their position (index)
-                var $tds = $row.find('td');
-                if ($tds.length < 26) return;
+                var ttlSamPc = parseFloat($row.find('[data-field="ttl_sam_pc"]').val()) || 0;
+                var unitSmv = parseFloat($row.find('[data-field="unit_smv"]').val()) || 0;
+                var unitCarder = parseFloat($row.find('[data-field="unit_carder"]').val()) || 0;
+                var planHours = parseFloat($row.find('[data-field="plan_hours"]').val()) || 0;
+                var workedHours = parseFloat($row.find('[data-field="worked_hours"]').val()) || 0;
 
-                // Update Worked Hours input
-                $row.find('.field-input[data-field="worked_hours"]').val(hours);
-
-                // Update Available Minutes (column index 8)
-                var availMin = planHours * hours * 60;
-                $tds.eq(8).text(number_format(availMin, 0));
-
-                // Update Plan Minutes (column index 9)
-                var planMin = dayForecast * unitCarder;
-                $tds.eq(9).text(number_format(planMin, 0));
-
-                // Update Plan Eff (column index 10)
+                var dayForecast = unitSmv > 0 ? (unitCarder * hours * 60 * targetEff) / unitSmv : 0;
+                var availMin = unitCarder * planHours * 60;
+                var planMin = dayForecast * unitSmv;
                 var planEff = availMin > 0 ? (planMin / availMin) * 100 : 0;
-                $tds.eq(10).text(number_format(planEff, 1) + '%');
+                var target100 = unitSmv > 0 ? (unitCarder / unitSmv) * 60 : 0;
 
-                // Update 100% Target (column index 11)
-                var target100 = unitCarder > 0 ? (planHours / unitCarder) * 60 : 0;
-                $tds.eq(11).text(number_format(target100, 0));
-
-                // Update Day Ttl (column index 23)
                 var dayTotal = 0;
-                for(var i=12; i<=22; i++) {
-                    dayTotal += parseFloat($tds.eq(i).find('input').val()) || 0;
+                for (var h = 1; h <= hours; h++) {
+                    var val = parseFloat($row.find('.hour-input[data-hour="'+h+'"]').val()) || 0;
+                    dayTotal += val;
                 }
-                $tds.eq(23).text(number_format(dayTotal, 0));
 
-                // Update Ern Minutes (column index 24)
-                var ernMin = dayTotal * ttlSamPc;
-                $tds.eq(24).text(number_format(ernMin, 1));
+                var ernMin = dayTotal * unitSmv;
+                var denominator = availMin * workedHours;
+                var acvdEff = denominator > 0 ? (ernMin * planHours) / denominator : 0;
 
-                // Update Acvd Eff (column index 25)
-                var acvdEff = availMin > 0 ? (ernMin / availMin) * 100 : 0;
-                $tds.eq(25).text(number_format(acvdEff, 1) + '%');
+                var $tds = $row.find('td');
+                if ($tds.length >= 25) {
+                    $tds.eq(4).text(number_format(dayForecast, 0));
+                    $tds.eq(8).text(number_format(availMin, 0));
+                    $tds.eq(9).text(number_format(planMin, 0));
+                    $tds.eq(10).text(number_format(planEff, 1) + '%');
+                    $tds.eq(11).text(number_format(target100, 0));
+                    $tds.eq(22).text(number_format(dayTotal, 0));
+                    $tds.eq(23).text(number_format(ernMin, 1));
+                    $tds.eq(24).text(number_format(acvdEff * 100, 1) + '%');
+                }
             });
+        }
+
+        function recalcMatchOut() {
+            var hours = parseInt($('#workHours').val()) || 10;
+            var targetEff = 0.90;
+            var $rows = $('.component-row');
+
+            var smvSum = 0, carderSum = 0, planSum = 0, workedSum = 0;
+            var count = $rows.length;
+            var hourlySums = Array(hours+1).fill(0);
+
+            $rows.each(function() {
+                var $row = $(this);
+                smvSum += parseFloat($row.find('[data-field="unit_smv"]').val()) || 0;
+                carderSum += parseFloat($row.find('[data-field="unit_carder"]').val()) || 0;
+                planSum += parseFloat($row.find('[data-field="plan_hours"]').val()) || 0;
+                workedSum += parseFloat($row.find('[data-field="worked_hours"]').val()) || 0;
+                for (var h = 1; h <= hours; h++) {
+                    hourlySums[h] += parseFloat($row.find('.hour-input[data-hour="'+h+'"]').val()) || 0;
+                }
+            });
+
+            var avgPlan = count > 0 ? planSum / count : 0;
+            var avgWorked = count > 0 ? workedSum / count : 0;
+            var hourlyAvgs = Array(hours+1).fill(0);
+            for (var h = 1; h <= hours; h++) {
+                hourlyAvgs[h] = count > 0 ? hourlySums[h] / count : 0;
+            }
+
+            var moDayForecast = smvSum > 0 ? (carderSum * hours * 60 * targetEff) / smvSum : 0;
+            var moAvail = carderSum * avgPlan * 60;
+            var moPlanMin = moDayForecast * smvSum;
+            var moPlanEff = moAvail > 0 ? (moPlanMin / moAvail) * 100 : 0;
+            var moTarget = smvSum > 0 ? (carderSum / smvSum) * 60 : 0;
+            var moDayTotal = 0;
+            for (var h = 1; h <= hours; h++) {
+                moDayTotal += hourlyAvgs[h];
+            }
+            var moErn = moDayTotal * smvSum;
+            var denominator = moAvail * avgWorked;
+            var moAcvd = denominator > 0 ? (moErn * avgPlan) / denominator : 0;
+
+            var $moRow = $('#match-out-row');
+            $moRow.find('.match-out-smv').text(number_format(smvSum, 2));
+            $moRow.find('.match-out-forecast').text(number_format(moDayForecast, 0));
+            $moRow.find('.match-out-carder').text(number_format(carderSum, 0));
+            $moRow.find('.match-out-plan').text(number_format(avgPlan, 1));
+            $moRow.find('.match-out-worked').text(number_format(avgWorked, 1));
+            $moRow.find('.match-out-avail').text(number_format(moAvail, 0));
+            $moRow.find('.match-out-planmin').text(number_format(moPlanMin, 0));
+            $moRow.find('.match-out-planeff').text(number_format(moPlanEff, 1) + '%');
+            $moRow.find('.match-out-target').text(number_format(moTarget, 0));
+            for (var h = 1; h <= hours; h++) {
+                $moRow.find('.match-out-hour-'+h).text(number_format(hourlyAvgs[h], 0));
+            }
+            $moRow.find('.match-out-daytotal').text(number_format(moDayTotal, 0));
+            $moRow.find('.match-out-ern').text(number_format(moErn, 1));
+            $moRow.find('.match-out-acvd').text(number_format(moAcvd * 100, 1) + '%');
+        }
+
+        function recalcDHU() {
+            var hours = parseInt($('#workHours').val()) || 10;
+            var dhuTotal = 0;
+            for (var h = 1; h <= hours; h++) {
+                dhuTotal += parseFloat($('.dhu-hour-input[data-hour="'+h+'"]').val()) || 0;
+            }
+            var moDayTotal = parseFloat($('#match-out-row .match-out-daytotal').text().replace(/,/g, '')) || 0;
+            var dhuPercent = moDayTotal > 0 ? (dhuTotal / moDayTotal) * 100 : 0;
+
+            $('.dhu-daytotal').text(number_format(dhuTotal, 0));
+            $('.dhu-percent').text(number_format(dhuPercent, 1) + '%');
         }
 
         function number_format(number, decimals) {
@@ -820,7 +543,6 @@ foreach ($components as $comp) {
                 success: function(response) {
                     if (response.success) {
                         showNotification('Saved!', 'success');
-                        setTimeout(function() { window.location.reload(); }, 500);
                     }
                 }
             });
@@ -847,7 +569,6 @@ foreach ($components as $comp) {
                 success: function(response) {
                     if (response.success) {
                         showNotification('Saved!', 'success');
-                        setTimeout(function() { window.location.reload(); }, 500);
                     }
                 }
             });
@@ -855,7 +576,7 @@ foreach ($components as $comp) {
 
         function saveAll() {
             showNotification('Saving all data...', 'info');
-            $('.field-input, .hour-input').each(function() { $(this).trigger('change'); });
+            $('.field-input, .hour-input, .dhu-hour-input').each(function() { $(this).trigger('change'); });
             setTimeout(function() { showNotification('All data saved!', 'success'); }, 1000);
         }
 
@@ -888,6 +609,10 @@ foreach ($components as $comp) {
                 var index = inputs.index(this);
                 if (index < inputs.length - 1) { inputs.eq(index + 1).focus(); }
             }
+        });
+
+        $(document).ready(function() {
+            recalcAll();
         });
     </script>
 </body>

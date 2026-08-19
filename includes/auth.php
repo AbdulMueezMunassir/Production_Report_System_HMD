@@ -1,5 +1,5 @@
 <?php
-// includes/auth.php
+// includes/auth.php - FIXED: Uses PDO getDB()
 require_once __DIR__ . '/../config/database.php';
 
 function isLoggedIn() {
@@ -7,12 +7,10 @@ function isLoggedIn() {
 }
 
 function loginUser($username, $password) {
-    $conn = getDBConnection();
+    $conn = getDB(); // FIXED: Now uses PDO
     $stmt = $conn->prepare("SELECT id, username, password, full_name, role FROM users WHERE username = ?");
-    $stmt->bind_param("s", $username);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $user = $result->fetch_assoc();
+    $stmt->execute([$username]);
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
     
     if ($user && password_verify($password, $user['password'])) {
         $_SESSION['user_id'] = $user['id'];
@@ -44,32 +42,24 @@ function isAdmin() {
 }
 
 function getAllUsers($conn) {
-    $sql = "SELECT id, username, full_name, role, created_at FROM users ORDER BY created_at DESC";
-    $result = $conn->query($sql);
-    $users = [];
-    while ($row = $result->fetch_assoc()) {
-        $users[] = $row;
-    }
-    return $users;
+    $stmt = $conn->query("SELECT id, username, full_name, role, created_at FROM users ORDER BY created_at DESC");
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
 function createUser($conn, $username, $password, $full_name, $role = 'user') {
     $hashed = password_hash($password, PASSWORD_DEFAULT);
     $stmt = $conn->prepare("INSERT INTO users (username, password, full_name, role) VALUES (?, ?, ?, ?)");
-    $stmt->bind_param("ssss", $username, $hashed, $full_name, $role);
-    return $stmt->execute();
+    return $stmt->execute([$username, $hashed, $full_name, $role]);
 }
 
 function deleteUser($conn, $user_id) {
     $stmt = $conn->prepare("DELETE FROM users WHERE id = ? AND role != 'admin'");
-    $stmt->bind_param("i", $user_id);
-    return $stmt->execute();
+    return $stmt->execute([$user_id]);
 }
 
 function resetUserPassword($conn, $user_id, $new_password) {
     $hashed = password_hash($new_password, PASSWORD_DEFAULT);
     $stmt = $conn->prepare("UPDATE users SET password = ? WHERE id = ?");
-    $stmt->bind_param("si", $hashed, $user_id);
-    return $stmt->execute();
+    return $stmt->execute([$hashed, $user_id]);
 }
 ?>

@@ -1,260 +1,55 @@
 /* assets/css/style.css */
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', Arial, sans-serif; background: #f4f6f9; }
 
-body {
-    font-family: 'Segoe UI', Arial, sans-serif;
-    background: #f0f2f5;
-    padding: 20px;
-}
+/* Login */
+.login-page { display: flex; justify-content: center; align-items: center; height: 100vh; background: #217346; }
+.login-container { width: 100%; max-width: 400px; padding: 20px; }
+.login-box { background: #fff; padding: 40px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
+.login-box h1 { color: #217346; text-align: center; margin-bottom: 10px; }
+.login-box h3 { color: #666; text-align: center; margin-bottom: 30px; font-size: 14px; }
+.form-group { margin-bottom: 20px; }
+.form-group label { display: block; font-weight: 600; margin-bottom: 5px; color: #333; }
+.form-group input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+.btn-primary { width: 100%; padding: 12px; background: #217346; color: #fff; border: none; border-radius: 4px; font-size: 16px; font-weight: 600; cursor: pointer; }
+.btn-primary:hover { background: #1a5c3a; }
+.error-msg { background: #f8d7da; color: #721c24; padding: 10px; border-radius: 4px; margin-bottom: 20px; }
 
-.excel-header {
-    background: #fff;
-    border-bottom: 3px solid #217346;
-    padding: 15px 20px;
-    margin-bottom: 20px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 15px;
-    border-radius: 4px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
+/* Dashboard */
+.app-container { display: flex; min-height: 100vh; }
+.sidebar { width: 250px; background: #1a2332; color: #fff; min-height: 100vh; padding: 20px 0; }
+.sidebar-header { padding: 0 20px 20px; border-bottom: 1px solid #2a3a4a; margin-bottom: 20px; }
+.sidebar-header h2 { color: #fff; margin: 0; }
+.sidebar-header p { color: #8a9aa8; font-size: 12px; }
+.nav-links { list-style: none; padding: 0; }
+.nav-links li { padding: 0 20px; }
+.nav-links li.dropdown-header { color: #8a9aa8; font-size: 12px; font-weight: 600; padding: 20px 20px 5px; text-transform: uppercase; }
+.nav-links li a { display: block; padding: 10px 15px; color: #c4cbd4; text-decoration: none; border-radius: 4px; margin: 2px 0; transition: 0.3s; }
+.nav-links li a:hover { background: #2a3a4a; color: #fff; }
+.main-content { flex: 1; background: #f4f6f9; }
+.topbar { background: #fff; padding: 15px 30px; border-bottom: 1px solid #e0e0e0; display: flex; justify-content: space-between; align-items: center; }
+.content-wrapper { padding: 30px; }
+.dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
+.dash-card { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+.dash-card h3 { color: #666; font-size: 14px; margin-bottom: 10px; }
+.dash-number { font-size: 32px; font-weight: 700; color: #217346; }
 
-.excel-header h1 {
-    font-size: 18px;
-    color: #217346;
-    font-weight: 700;
-}
+/* Report Styles - Exact Excel Look */
+.report-meta { display: flex; justify-content: space-between; padding: 15px 0; font-weight: 600; border-bottom: 2px solid #000; margin-bottom: 20px; }
+.report-wrapper { overflow-x: auto; background: #fff; padding: 20px; border: 1px solid #ddd; }
+.report-table { border-collapse: collapse; width: max-content; min-width: 100%; }
+.report-table th, .report-table td { border: 1px solid #222; padding: 4px 6px; text-align: center; vertical-align: middle; font-size: 12px; white-space: nowrap; }
+.report-table th { background: #f8f9fa; font-weight: 700; font-size: 11px; position: sticky; top: 0; z-index: 10; }
+.report-table input { width: 70px; border: none; text-align: center; font-size: 12px; padding: 2px; background: transparent; }
+.report-table .editable { background: #FFF200; }
+.report-table .editable input { background: transparent; }
+.report-table .editable input:focus { outline: 2px solid #217346; background: #fff; }
+.report-table .calculated { background: #f0f0f0; font-weight: 500; }
+.report-table .summary-row td { background: #D9D9D9; font-weight: 700; }
+.report-table tr.dhu-row td { background: #F4CCCC; color: #dc3545; font-weight: 700; }
+.report-actions { margin-top: 20px; display: flex; gap: 10px; }
+.btn-success { padding: 10px 20px; background: #28a745; color: #fff; border: none; border-radius: 4px; font-weight: 600; cursor: pointer; }
+.btn-secondary { padding: 10px 20px; background: #6c757d; color: #fff; border: none; border-radius: 4px; font-weight: 600; cursor: pointer; }
+.report-table .match-out-row td { background: #e8f5e9; font-weight: 700; }
 
-.excel-header .user-info {
-    font-size: 13px;
-    color: #666;
-}
-
-.excel-container {
-    background: #fff;
-    border: 1px solid #d0d0d0;
-    border-radius: 4px;
-    overflow: hidden;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    margin-bottom: 20px;
-}
-
-.excel-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-}
-
-.excel-table th {
-    background: #f8f9fa;
-    border: 1px solid #d0d0d0;
-    padding: 8px 6px;
-    text-align: center;
-    font-weight: 700;
-    color: #333;
-    font-size: 11px;
-    white-space: nowrap;
-    position: sticky;
-    top: 0;
-    z-index: 10;
-}
-
-.excel-table td {
-    border: 1px solid #d0d0d0;
-    padding: 4px 6px;
-    text-align: center;
-    min-height: 30px;
-}
-
-.excel-table tr:hover {
-    background: #f5f5f5;
-}
-
-.excel-table .editable {
-    background: #ffff00;
-}
-
-.excel-table input[type="number"] {
-    width: 100%;
-    border: none;
-    background: transparent;
-    text-align: center;
-    padding: 4px;
-    font-size: 12px;
-    font-weight: 500;
-}
-
-.excel-table input[type="number"]:focus {
-    outline: 2px solid #217346;
-    outline-offset: -2px;
-    background: #fff;
-}
-
-.excel-table input[type="number"]:hover {
-    background: #fffbe6;
-}
-
-.excel-table .total-row {
-    background: #e8f0fe;
-    font-weight: 700;
-}
-
-.excel-table .grand-total {
-    background: #217346;
-    color: #fff;
-    font-weight: 700;
-}
-
-.btn-primary {
-    background: #217346;
-    color: #fff;
-    border: none;
-    padding: 8px 20px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-weight: 600;
-}
-
-.btn-primary:hover {
-    background: #1a5c3a;
-}
-
-.btn-secondary {
-    background: #6c757d;
-    color: #fff;
-    border: none;
-    padding: 8px 20px;
-    border-radius: 4px;
-    cursor: pointer;
-}
-
-.btn-secondary:hover {
-    background: #5a6268;
-}
-
-@media (max-width: 768px) {
-    body { padding: 10px; }
-    .excel-header { flex-direction: column; align-items: stretch; }
-    .excel-table { font-size: 10px; }
-    .excel-table th, .excel-table td { padding: 2px 3px; }
-    .excel-table input[type="number"] { font-size: 10px; padding: 2px; }
-}
-
-/* Print styles */
-@media print {
-    .excel-header { 
-        border-bottom: 2px solid #000;
-        box-shadow: none;
-    }
-    .excel-container { 
-        border: 1px solid #000;
-        box-shadow: none;
-    }
-    .excel-table th { 
-        background: #eee !important;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-    }
-    .excel-table .grand-total {
-        background: #217346 !important;
-        color: #fff !important;
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-    }
-    /* Add to assets/css/style.css for consistent glass design */
-
-/* Glass Morphism Base */
-.glass {
-    background: rgba(255, 255, 255, 0.15);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-}
-
-/* Glass Card Hover Effects */
-.glass-hover {
-    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.glass-hover:hover {
-    transform: translateY(-5px) scale(1.01);
-    box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.3);
-}
-
-/* Glass Button */
-.btn-glass {
-    background: rgba(255, 255, 255, 0.15);
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    color: #fff;
-    padding: 12px 24px;
-    border-radius: 12px;
-    cursor: pointer;
-    transition: all 0.3s ease;
-}
-
-.btn-glass:hover {
-    background: rgba(255, 255, 255, 0.25);
-    transform: scale(1.05);
-    box-shadow: 0 10px 30px -8px rgba(0, 0, 0, 0.2);
-}
-
-/* Glass Input */
-.input-glass {
-    background: rgba(255, 255, 255, 0.08);
-    border: 2px solid rgba(255, 255, 255, 0.15);
-    border-radius: 12px;
-    padding: 14px 18px;
-    color: #fff;
-    font-size: 15px;
-    transition: all 0.3s ease;
-    width: 100%;
-}
-
-.input-glass:focus {
-    outline: none;
-    background: rgba(255, 255, 255, 0.12);
-    border-color: rgba(255, 255, 255, 0.4);
-    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.05);
-}
-
-.input-glass:hover {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: rgba(255, 255, 255, 0.25);
-}
-
-/* Glass Table */
-.table-glass {
-    background: rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.table-glass th {
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.table-glass td {
-    border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.table-glass tr:hover {
-    background: rgba(255, 255, 255, 0.05);
-}
-
-.topbar .logo-mark img { 
-    height: 32px; 
-    width: auto;
-    display: block;
-    image-rendering: auto;
-    -ms-interpolation-mode: bicubic;
-}
-}
+@media print { .sidebar, .topbar, .report-actions { display: none; } }
