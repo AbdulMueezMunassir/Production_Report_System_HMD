@@ -1,5 +1,5 @@
 <?php
-// includes/auth.php - FIXED: Uses PDO getDB()
+// includes/auth.php
 require_once __DIR__ . '/../config/database.php';
 
 function isLoggedIn() {
@@ -7,7 +7,7 @@ function isLoggedIn() {
 }
 
 function loginUser($username, $password) {
-    $conn = getDB(); // FIXED: Now uses PDO
+    $conn = getDB();
     $stmt = $conn->prepare("SELECT id, username, password, full_name, role FROM users WHERE username = ?");
     $stmt->execute([$username]);
     $user = $stmt->fetch(PDO::FETCH_ASSOC);

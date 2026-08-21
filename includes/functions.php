@@ -1,184 +1,443 @@
 <?php
-// includes/functions.php - COMPLETE VERSION WITH ASSEMBLY FORMULAS
+// includes/functions.php - COMPLETE FIXED
 require_once __DIR__ . '/../config/database.php';
 
-// Constants
-const DEFAULT_WORKING_HOURS = 11;
-const MAX_WORKING_HOURS = 11;
-const DEFAULT_TARGET = 0.90;
-
-function normalizeWorkingHours($h) { 
-    return max(1, min(MAX_WORKING_HOURS, (int)$h)); 
-}
+const TARGET_90 = 0.90;
+const TARGET_80 = 0.80;
 
 function safeDivide($n, $d) { 
     return ($d == 0) ? 0.0 : (float)$n / (float)$d; 
 }
 
-// ==============================================================
-// EXACT EXCEL FORMULAS
-// ==============================================================
-
-// Day Forecast = Carder * Working Hours * 60 * Target / SMV
-function calculateDayForecast($carder, $workingHours, $smv, $target = DEFAULT_TARGET) {
-    if ($smv <= 0) return 0;
-    return ($carder * $workingHours * 60 * $target) / $smv;
+// ============================================================
+// DETAIL ROW FORMULAS (Shirt/Trouser - 90% target)
+// ============================================================
+function calcDayForecast90($carder, $unitSmv) {
+    if ($unitSmv <= 0 || $carder <= 0) return 0;
+    return ($carder * 600 / $unitSmv) * TARGET_90;
 }
 
-// Available Minutes = Plan Hours * Worked Hours * 60
-function calculateAvailableMinutes($planHours, $workedHours) {
-    return max(0, $planHours) * max(0, $workedHours) * 60;
+function calcAvailableMinutes($carder, $planHours) {
+    return $carder * $planHours * 60;
 }
 
-// Plan Minutes = Day Forecast * SMV
-function calculatePlanMinutes($dayForecast, $smv) {
-    return $dayForecast * $smv;
+function calcPlanMinutes($dayForecast, $unitSmv) {
+    return $dayForecast * $unitSmv;
 }
 
-// Plan Eff = Plan Minutes / Available Minutes
-function calculatePlanEfficiency($planMinutes, $availableMinutes) {
+function calcPlanEff($planMinutes, $availableMinutes) {
     return safeDivide($planMinutes, $availableMinutes);
 }
 
-// 100% Target = (Plan Hours / Unit Carder) * 60
-function calculateTarget100($planHours, $unitCarder) {
-    return safeDivide($planHours, $unitCarder) * 60;
+function calcTarget100($carder, $unitSmv) {
+    if ($unitSmv <= 0) return 0;
+    return ($carder / $unitSmv) * 60;
 }
 
-// Day Ttl = SUM(hour_1 to hour_working)
-function calculateDayTotal($data, $workingHours) {
+function calcDayTotal($hoursData, $workHours) {
     $total = 0;
-    for ($h = 1; $h <= $workingHours; $h++) {
-        $total += (float)($data["hour_$h"] ?? 0);
+    for ($h = 1; $h <= $workHours; $h++) {
+        $total += (float)($hoursData["hour_$h"] ?? 0);
     }
     return $total;
 }
 
-// Ern Minutes = Day Ttl * SMV
-function calculateEarnedMinutes($dayTotal, $smv) {
-    return $dayTotal * $smv;
+function calcEarnedMinutes($dayTotal, $unitSmv) {
+    return $dayTotal * $unitSmv;
 }
 
-// Acvd Eff = (Ern Minutes / Available Minutes) * 100
-function calculateAchievedEfficiency($ernMinutes, $availableMinutes) {
-    return safeDivide($ernMinutes, $availableMinutes) * 100;
+function calcAchievedEff90($earnedMinutes, $availableMinutes, $planHours, $workedHours) {
+    if ($availableMinutes <= 0 || $planHours <= 0 || $workedHours <= 0) return 0;
+    $denominator = ($availableMinutes / $planHours) * $workedHours;
+    return safeDivide($earnedMinutes, $denominator);
 }
 
-// ==============================================================
-// ASSEMBLY FORMULAS
-// ==============================================================
-
-// Assembly Target = (Working Hours * 600 / Manpower) * 80%
-function calculateAssemblyTarget($workingHours, $manpower) {
-    if ($manpower <= 0) return 0;
-    return ($workingHours * 600 / $manpower) * 0.80;
+// ============================================================
+// ASSEMBLY ROW FORMULAS (80% target)
+// ============================================================
+function calcDayForecast80($carder, $sectionSmv) {
+    if ($sectionSmv <= 0 || $carder <= 0) return 0;
+    return ($carder * 600 / $sectionSmv) * TARGET_80;
 }
 
-// Assembly Available Minutes = Working Hours * Efficiency * 60
-function calculateAssemblyAvailable($workingHours, $efficiency) {
-    return $workingHours * $efficiency * 60;
+function calcAssemblyEarnedMinutes($dayTotal, $ttlSamPc) {
+    return $dayTotal * $ttlSamPc;
 }
 
-// Assembly Target Minutes = Target * Manpower
-function calculateAssemblyTargetMinutes($target, $manpower) {
-    return $target * $manpower;
-}
-
-// Assembly Capacity Efficiency = Target Minutes / Available Minutes
-function calculateAssemblyCapacityEff($targetMinutes, $availableMinutes) {
-    return safeDivide($targetMinutes, $availableMinutes);
-}
-
-// Assembly Target Per Hour = (Working Hours / Manpower) * 60
-function calculateAssemblyTargetPerHour($workingHours, $manpower) {
-    return safeDivide($workingHours, $manpower) * 60;
-}
-
-// Assembly Efficiency = (Total Standard Minutes / Available Minutes) * (Efficiency / Worked Hours)
-function calculateAssemblyEfficiency($totalStdMinutes, $availableMinutes, $efficiency, $workedHours) {
+function calcAssemblyAchievedEff80($earnedMinutes, $availableMinutes, $planHours, $workedHours) {
     if ($availableMinutes <= 0 || $workedHours <= 0) return 0;
-    return ($totalStdMinutes / $availableMinutes) * ($efficiency / $workedHours);
+    return ($earnedMinutes / $availableMinutes) * ($planHours / $workedHours);
 }
 
-// ==============================================================
-// DATABASE FUNCTIONS
-// ==============================================================
+// ============================================================
+// MATCH OUT (Rows 8, 14) - SUM and AVERAGE
+// ============================================================
+function calculateMatchOut($conn, $division_id, $date, $work_hours) {
+    $components = getComponents($conn, $division_id);
+    if (!is_array($components) || empty($components)) {
+        return [];
+    }
+    
+    $match = [
+        'unit_smv' => 0,
+        'unit_carder' => 0,
+        'plan_hours' => 0,
+        'worked_hours' => 0,
+        'day_forecast' => 0,
+        'available_minutes' => 0,
+        'plan_minutes' => 0,
+        'plan_eff' => 0,
+        'target_100' => 0,
+        'hours' => array_fill(1, $work_hours, 0),
+        'day_total' => 0,
+        'earned_minutes' => 0,
+        'acvd_eff' => 0
+    ];
+    $count = 0;
+    $hourSums = array_fill(1, $work_hours, 0);
+    $planHoursSum = 0;
+    $workedHoursSum = 0;
 
+    foreach ($components as $comp) {
+        if ($comp['is_match_out']) continue;
+        $data = getReportData($conn, $division_id, $comp['id'], $date);
+        if (!empty($data) && ($data['unit_smv'] ?? 0) > 0) {
+            $count++;
+            $match['unit_smv'] += (float)$data['unit_smv'];
+            $match['unit_carder'] += (int)$data['unit_carder'];
+            $planHoursSum += (float)$data['plan_hours'];
+            $workedHoursSum += (float)$data['worked_hours'];
+            for ($h = 1; $h <= $work_hours; $h++) {
+                $hourSums[$h] += (float)($data["hour_$h"] ?? 0);
+            }
+        }
+    }
+
+    if ($count > 0) {
+        $match['plan_hours'] = $planHoursSum / $count;
+        $match['worked_hours'] = $workedHoursSum / $count;
+        if ($match['unit_smv'] > 0) {
+            $match['day_forecast'] = calcDayForecast90($match['unit_carder'], $match['unit_smv']);
+        }
+        $match['available_minutes'] = calcAvailableMinutes($match['unit_carder'], $match['plan_hours']);
+        $match['plan_minutes'] = calcPlanMinutes($match['day_forecast'], $match['unit_smv']);
+        $match['plan_eff'] = calcPlanEff($match['plan_minutes'], $match['available_minutes']);
+        $match['target_100'] = calcTarget100($match['unit_carder'], $match['unit_smv']);
+        for ($h = 1; $h <= $work_hours; $h++) {
+            $match['hours'][$h] = round($hourSums[$h] / $count, 0);
+        }
+        $match['day_total'] = array_sum($match['hours']);
+        $match['earned_minutes'] = calcEarnedMinutes($match['day_total'], $match['unit_smv']);
+        $match['acvd_eff'] = calcAchievedEff90(
+            $match['earned_minutes'],
+            $match['available_minutes'],
+            $match['plan_hours'],
+            $match['worked_hours']
+        );
+    }
+    return $match;
+}
+
+// ============================================================
+// LEAN TOTAL (Row 32)
+// ============================================================
+function calculateLeanTotal($assemblyRows, $work_hours) {
+    if (!is_array($assemblyRows) || empty($assemblyRows)) {
+        return [
+            'ttl_sam' => 0,
+            'section_sam' => 0,
+            'day_forecast' => 0,
+            'assemble_carder' => 0,
+            'plan_hours' => 10,
+            'worked_hours' => 10,
+            'available_minutes' => 0,
+            'plan_minutes' => 0,
+            'plan_eff' => 0.8,
+            'target_100' => 0,
+            'hours' => array_fill(1, $work_hours, 0),
+            'day_total' => 0,
+            'earned_minutes' => 0,
+            'acvd_eff' => 0,
+            'dhu' => 0
+        ];
+    }
+    
+    $lt = [
+        'ttl_sam' => 0,
+        'section_sam' => 0,
+        'day_forecast' => 0,
+        'assemble_carder' => 0,
+        'plan_hours' => 10,
+        'worked_hours' => 10,
+        'available_minutes' => 0,
+        'plan_minutes' => 0,
+        'plan_eff' => 0.8,
+        'target_100' => 0,
+        'hours' => array_fill(1, $work_hours, 0),
+        'day_total' => 0,
+        'earned_minutes' => 0,
+        'acvd_eff' => 0,
+        'dhu' => 0
+    ];
+    $count = 0;
+    foreach ($assemblyRows as $row) {
+        if (isset($row['ttl_sam_pc']) && $row['ttl_sam_pc'] > 0) {
+            $count++;
+            $lt['ttl_sam'] += $row['ttl_sam_pc'];
+            $lt['section_sam'] += $row['unit_smv'];
+            $lt['day_forecast'] += $row['day_forecast'];
+            $lt['assemble_carder'] += $row['unit_carder'];
+            $lt['available_minutes'] += $row['available_minutes'];
+            $lt['plan_minutes'] += $row['plan_minutes'];
+            $lt['target_100'] += $row['target_100'];
+            for ($h = 1; $h <= $work_hours; $h++) {
+                $lt['hours'][$h] += $row["hour_$h"] ?? 0;
+            }
+        }
+    }
+    if ($count > 0) {
+        $lt['ttl_sam'] = $lt['ttl_sam'] / $count;
+        $lt['section_sam'] = $lt['section_sam'] / $count;
+        $lt['available_minutes'] = $lt['available_minutes'] / $count;
+        $lt['plan_minutes'] = $lt['plan_minutes'] / $count;
+        $lt['target_100'] = $lt['target_100'] / $count;
+        for ($h = 1; $h <= $work_hours; $h++) {
+            $lt['hours'][$h] = round($lt['hours'][$h] / $count, 0);
+        }
+        $lt['day_total'] = array_sum($lt['hours']);
+        $lt['earned_minutes'] = $lt['day_total'] * $lt['ttl_sam'];
+        $lt['acvd_eff'] = ($lt['available_minutes'] > 0) ? ($lt['earned_minutes'] / $lt['available_minutes']) * ($lt['plan_hours'] / $lt['worked_hours']) : 0;
+    }
+    return $lt;
+}
+
+// ============================================================
+// FACTORY GRAND TOTAL (Row 35)
+// ============================================================
+function calculateGrandTotal($assemblyRows, $matchOutShirt, $matchOutTrouser, $work_hours) {
+    if (!is_array($assemblyRows) || empty($assemblyRows)) {
+        return [
+            'ttl_sam' => 0,
+            'section_sam' => 0,
+            'day_forecast' => 0,
+            'assemble_carder' => 0,
+            'plan_hours' => 10,
+            'worked_hours' => 10,
+            'available_minutes' => 0,
+            'plan_minutes' => 0,
+            'plan_eff' => 0,
+            'target_100' => 0,
+            'hours' => array_fill(1, $work_hours, 0),
+            'day_total' => 0,
+            'earned_minutes' => 0,
+            'acvd_eff' => 0
+        ];
+    }
+    
+    $lt = calculateLeanTotal($assemblyRows, $work_hours);
+    $gt = [
+        'ttl_sam' => $lt['ttl_sam'],
+        'section_sam' => $lt['section_sam'],
+        'day_forecast' => $lt['day_forecast'],
+        'assemble_carder' => $lt['assemble_carder'] + $matchOutShirt + $matchOutTrouser,
+        'plan_hours' => 10,
+        'worked_hours' => 10,
+        'available_minutes' => 0,
+        'plan_minutes' => 0,
+        'plan_eff' => 0,
+        'target_100' => 0,
+        'hours' => array_fill(1, $work_hours, 0),
+        'day_total' => 0,
+        'earned_minutes' => 0,
+        'acvd_eff' => 0
+    ];
+    
+    $gt['available_minutes'] = $gt['assemble_carder'] * $gt['plan_hours'] * 60;
+    
+    $planMinutes = 0;
+    foreach ($assemblyRows as $row) {
+        $planMinutes += ($row['day_forecast'] ?? 0) * ($row['ttl_sam_pc'] ?? 0);
+    }
+    $gt['plan_minutes'] = $planMinutes;
+    $gt['plan_eff'] = safeDivide($gt['plan_minutes'], $gt['available_minutes']);
+    $gt['target_100'] = ($gt['section_sam'] > 0) ? ($gt['assemble_carder'] / $gt['section_sam']) * 60 : 0;
+    
+    for ($h = 1; $h <= $work_hours; $h++) {
+        $numerator = 0;
+        foreach ($assemblyRows as $row) {
+            $numerator += ($row["hour_$h"] ?? 0) * ($row['ttl_sam_pc'] ?? 0);
+        }
+        $gt['hours'][$h] = ($gt['assemble_carder'] * 1 * 60 > 0) ? $numerator / ($gt['assemble_carder'] * 1 * 60) : 0;
+    }
+    $gt['day_total'] = array_sum($gt['hours']);
+    
+    $earned = 0;
+    foreach ($assemblyRows as $row) {
+        $dayTotal = 0;
+        for ($h = 1; $h <= $work_hours; $h++) {
+            $dayTotal += $row["hour_$h"] ?? 0;
+        }
+        $earned += $dayTotal * ($row['ttl_sam_pc'] ?? 0);
+    }
+    $gt['earned_minutes'] = $earned;
+    $gt['acvd_eff'] = ($gt['available_minutes'] > 0) ? ($gt['earned_minutes'] / $gt['available_minutes']) * ($gt['plan_hours'] / $gt['worked_hours']) : 0;
+    
+    return $gt;
+}
+
+// ============================================================
+// DATABASE HELPERS - ALWAYS RETURN ARRAYS
+// ============================================================
 function getDivisions($conn) {
-    $stmt = $conn->query("SELECT * FROM divisions WHERE is_active = TRUE ORDER BY display_order");
-    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    try {
+        $stmt = $conn->query("SELECT * FROM divisions WHERE is_active = TRUE ORDER BY display_order");
+        if ($stmt) {
+            $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            return is_array($result) ? $result : array();
+        }
+        return array();
+    } catch (Exception $e) {
+        return array();
+    }
 }
 
 function getComponents($conn, $div_id) {
-    $stmt = $conn->prepare("SELECT * FROM components WHERE division_id = ? ORDER BY display_order");
-    $stmt->execute([$div_id]);
-    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    try {
+        $stmt = $conn->prepare("SELECT * FROM components WHERE division_id = ? ORDER BY display_order");
+        $stmt->execute([$div_id]);
+        $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        return is_array($result) ? $result : array();
+    } catch (Exception $e) {
+        return array();
+    }
 }
 
 function getReportData($conn, $div_id, $unit_id, $date) {
-    $stmt = $conn->prepare("SELECT * FROM production_reports WHERE devition_id = ? AND unit_id = ? AND report_date = ?");
-    $stmt->execute([$div_id, $unit_id, $date]);
-    return $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    try {
+        $stmt = $conn->prepare("SELECT * FROM production_reports WHERE devition_id = ? AND unit_id = ? AND report_date = ?");
+        $stmt->execute([$div_id, $unit_id, $date]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$result) {
+            return [
+                'ttl_sam_pc' => 0,
+                'unit_smv' => 0,
+                'day_forecast' => 0,
+                'unit_carder' => 0,
+                'plan_hours' => 0,
+                'worked_hours' => 0,
+                'available_minutes' => 0,
+                'plan_minutes' => 0,
+                'plan_eff' => 0,
+                'target_100' => 0,
+                'day_total' => 0,
+                'acvd_eff' => 0,
+                'ern_minutes' => 0,
+                'hour_1' => 0,
+                'hour_2' => 0,
+                'hour_3' => 0,
+                'hour_4' => 0,
+                'hour_5' => 0,
+                'hour_6' => 0,
+                'hour_7' => 0,
+                'hour_8' => 0,
+                'hour_9' => 0,
+                'hour_10' => 0,
+                'hour_11' => 0
+            ];
+        }
+        return $result;
+    } catch (Exception $e) {
+        return [
+            'ttl_sam_pc' => 0,
+            'unit_smv' => 0,
+            'day_forecast' => 0,
+            'unit_carder' => 0,
+            'plan_hours' => 0,
+            'worked_hours' => 0,
+            'available_minutes' => 0,
+            'plan_minutes' => 0,
+            'plan_eff' => 0,
+            'target_100' => 0,
+            'day_total' => 0,
+            'acvd_eff' => 0,
+            'ern_minutes' => 0,
+            'hour_1' => 0,
+            'hour_2' => 0,
+            'hour_3' => 0,
+            'hour_4' => 0,
+            'hour_5' => 0,
+            'hour_6' => 0,
+            'hour_7' => 0,
+            'hour_8' => 0,
+            'hour_9' => 0,
+            'hour_10' => 0,
+            'hour_11' => 0
+        ];
+    }
 }
 
 function saveReportData($conn, $data, $workingHours) {
-    for ($h = 1; $h <= MAX_WORKING_HOURS; $h++) {
+    for ($h = 1; $h <= 11; $h++) {
         if ($h > $workingHours) $data["hour_$h"] = 0;
     }
     
-    $check = $conn->prepare("SELECT id FROM production_reports WHERE devition_id = ? AND unit_id = ? AND report_date = ?");
-    $check->execute([$data['devition_id'], $data['unit_id'], $data['report_date']]);
-    $existing = $check->fetch(PDO::FETCH_ASSOC);
+    try {
+        $check = $conn->prepare("SELECT id FROM production_reports WHERE devition_id = ? AND unit_id = ? AND report_date = ?");
+        $check->execute([$data['devition_id'], $data['unit_id'], $data['report_date']]);
+        $existing = $check->fetch(PDO::FETCH_ASSOC);
 
-    if ($existing) {
-        $sql = "UPDATE production_reports SET 
-                ttl_sam_pc=?, unit_smv=?, day_forecast=?, unit_carder=?, 
-                plan_hours=?, worked_hours=?, available_minutes=?, 
-                plan_minutes=?, plan_eff=?, target_100=?, 
-                hour_1=?, hour_2=?, hour_3=?, hour_4=?, hour_5=?, 
-                hour_6=?, hour_7=?, hour_8=?, hour_9=?, hour_10=?, hour_11=?, 
-                day_total=?, acvd_eff=? WHERE id=?";
-        $stmt = $conn->prepare($sql);
-        return $stmt->execute([
-            $data['ttl_sam_pc'], $data['unit_smv'], $data['day_forecast'], 
-            $data['unit_carder'], $data['plan_hours'], $data['worked_hours'],
-            $data['available_minutes'], $data['plan_minutes'], $data['plan_eff'], 
-            $data['target_100'],
-            $data['hour_1'], $data['hour_2'], $data['hour_3'], $data['hour_4'], 
-            $data['hour_5'], $data['hour_6'], $data['hour_7'], $data['hour_8'], 
-            $data['hour_9'], $data['hour_10'], $data['hour_11'],
-            $data['day_total'], $data['acvd_eff'], $existing['id']
-        ]);
-    } else {
-        $sql = "INSERT INTO production_reports (
-            report_date, devition_id, unit_id, ttl_sam_pc, unit_smv, 
-            day_forecast, unit_carder, plan_hours, worked_hours, 
-            available_minutes, plan_minutes, plan_eff, target_100, 
-            hour_1, hour_2, hour_3, hour_4, hour_5, hour_6, 
-            hour_7, hour_8, hour_9, hour_10, hour_11, 
-            day_total, acvd_eff
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        $stmt = $conn->prepare($sql);
-        return $stmt->execute([
-            $data['report_date'], $data['devition_id'], $data['unit_id'],
-            $data['ttl_sam_pc'], $data['unit_smv'], $data['day_forecast'], 
-            $data['unit_carder'], $data['plan_hours'], $data['worked_hours'],
-            $data['available_minutes'], $data['plan_minutes'], $data['plan_eff'], 
-            $data['target_100'],
-            $data['hour_1'], $data['hour_2'], $data['hour_3'], $data['hour_4'], 
-            $data['hour_5'], $data['hour_6'], $data['hour_7'], $data['hour_8'], 
-            $data['hour_9'], $data['hour_10'], $data['hour_11'],
-            $data['day_total'], $data['acvd_eff']
-        ]);
+        if ($existing) {
+            $sql = "UPDATE production_reports SET 
+                    ttl_sam_pc = ?, unit_smv = ?, day_forecast = ?, unit_carder = ?, 
+                    plan_hours = ?, worked_hours = ?, available_minutes = ?, 
+                    plan_minutes = ?, plan_eff = ?, target_100 = ?, 
+                    hour_1 = ?, hour_2 = ?, hour_3 = ?, hour_4 = ?, hour_5 = ?, 
+                    hour_6 = ?, hour_7 = ?, hour_8 = ?, hour_9 = ?, hour_10 = ?, hour_11 = ?, 
+                    day_total = ?, acvd_eff = ?, ern_minutes = ? WHERE id = ?";
+            $stmt = $conn->prepare($sql);
+            return $stmt->execute([
+                $data['ttl_sam_pc'], $data['unit_smv'], $data['day_forecast'], 
+                $data['unit_carder'], $data['plan_hours'], $data['worked_hours'],
+                $data['available_minutes'], $data['plan_minutes'], $data['plan_eff'], 
+                $data['target_100'],
+                $data['hour_1'], $data['hour_2'], $data['hour_3'], $data['hour_4'], 
+                $data['hour_5'], $data['hour_6'], $data['hour_7'], $data['hour_8'], 
+                $data['hour_9'], $data['hour_10'], $data['hour_11'],
+                $data['day_total'], $data['acvd_eff'], $data['ern_minutes'], $existing['id']
+            ]);
+        } else {
+            $sql = "INSERT INTO production_reports (
+                report_date, devition_id, unit_id, ttl_sam_pc, unit_smv, 
+                day_forecast, unit_carder, plan_hours, worked_hours, 
+                available_minutes, plan_minutes, plan_eff, target_100, 
+                hour_1, hour_2, hour_3, hour_4, hour_5, hour_6, 
+                hour_7, hour_8, hour_9, hour_10, hour_11, 
+                day_total, acvd_eff, ern_minutes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            $stmt = $conn->prepare($sql);
+            return $stmt->execute([
+                $data['report_date'], $data['devition_id'], $data['unit_id'],
+                $data['ttl_sam_pc'], $data['unit_smv'], $data['day_forecast'], 
+                $data['unit_carder'], $data['plan_hours'], $data['worked_hours'],
+                $data['available_minutes'], $data['plan_minutes'], $data['plan_eff'], 
+                $data['target_100'],
+                $data['hour_1'], $data['hour_2'], $data['hour_3'], $data['hour_4'], 
+                $data['hour_5'], $data['hour_6'], $data['hour_7'], $data['hour_8'], 
+                $data['hour_9'], $data['hour_10'], $data['hour_11'],
+                $data['day_total'], $data['acvd_eff'], $data['ern_minutes']
+            ]);
+        }
+    } catch (Exception $e) {
+        return false;
     }
 }
 
-// ==============================================================
-// STATISTICS FUNCTIONS
-// ==============================================================
-
 function getDivisionStats($conn, $div_id, $date, $workingHours) {
     $components = getComponents($conn, $div_id);
+    if (!is_array($components) || empty($components)) {
+        return ['total_units' => 0, 'setup_units' => 0, 'efficiency' => 0, 'has_data' => false];
+    }
+    
     $totalUnits = 0;
     $setupUnits = 0;
     $totalEff = 0;
@@ -190,7 +449,7 @@ function getDivisionStats($conn, $div_id, $date, $workingHours) {
         $data = getReportData($conn, $div_id, $comp['id'], $date);
         if (!empty($data) && ($data['ttl_sam_pc'] ?? 0) > 0) {
             $setupUnits++;
-            if ($data['acvd_eff'] > 0) {
+            if (isset($data['acvd_eff']) && $data['acvd_eff'] > 0) {
                 $totalEff += $data['acvd_eff'];
                 $count++;
             }
@@ -200,16 +459,19 @@ function getDivisionStats($conn, $div_id, $date, $workingHours) {
     return [
         'total_units' => $totalUnits,
         'setup_units' => $setupUnits,
-        'efficiency' => $count > 0 ? round($totalEff / $count, 0) : 0,
+        'efficiency' => $count > 0 ? round(($totalEff / $count) * 100, 0) : 0,
         'has_data' => $setupUnits > 0
     ];
 }
 
 function getFactoryEfficiency($conn, $date, $workingHours) {
     $divisions = getDivisions($conn);
+    if (!is_array($divisions) || empty($divisions)) return 0;
+    
     $totalEff = 0;
     $count = 0;
     foreach ($divisions as $div) {
+        if ($div['name'] === 'Coat') continue;
         $stats = getDivisionStats($conn, $div['id'], $date, $workingHours);
         if ($stats['efficiency'] > 0) {
             $totalEff += $stats['efficiency'];
@@ -220,25 +482,31 @@ function getFactoryEfficiency($conn, $date, $workingHours) {
 }
 
 function getReportsList($conn, $date = null, $division_id = null) {
-    $sql = "SELECT r.*, d.name as division_name 
-            FROM production_reports r 
-            JOIN divisions d ON r.devition_id = d.id 
-            WHERE 1=1";
-    $params = [];
-    
-    if ($date) {
-        $sql .= " AND r.report_date = ?";
-        $params[] = $date;
+    try {
+        $sql = "SELECT r.*, d.name as division_name 
+                FROM production_reports r 
+                JOIN divisions d ON r.devition_id = d.id 
+                WHERE 1=1";
+        $params = [];
+        
+        if ($date) {
+            $sql .= " AND r.report_date = ?";
+            $params[] = $date;
+        }
+        if ($division_id && $division_id !== 'all') {
+            $sql .= " AND r.devition_id = ?";
+            $params[] = $division_id;
+        }
+        
+        $sql .= " AND d.name != 'Coat'";
+        $sql .= " ORDER BY r.report_date DESC, r.id DESC";
+        
+        $stmt = $conn->prepare($sql);
+        $stmt->execute($params);
+        $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        return is_array($result) ? $result : [];
+    } catch (Exception $e) {
+        return [];
     }
-    if ($division_id && $division_id !== 'all') {
-        $sql .= " AND r.devition_id = ?";
-        $params[] = $division_id;
-    }
-    
-    $sql .= " ORDER BY r.report_date DESC, r.id DESC";
-    
-    $stmt = $conn->prepare($sql);
-    $stmt->execute($params);
-    return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 ?>

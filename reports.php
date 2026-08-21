@@ -1,5 +1,5 @@
 <?php
-// reports.php - WITH WORKING FILTERS
+// reports.php - WITH LOGO
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
@@ -17,27 +17,29 @@ $to_date = isset($_GET['to']) ? $_GET['to'] : date('Y-m-d');
 $division_filter = isset($_GET['division']) ? $_GET['division'] : 'all';
 
 $divisions = getDivisions($conn);
+if (!is_array($divisions)) $divisions = array();
 
-// Build query for reports with proper filtering
 $sql = "SELECT r.*, d.name as division_name 
         FROM production_reports r 
         JOIN divisions d ON r.devition_id = d.id 
         WHERE r.report_date BETWEEN ? AND ?";
-
-$params = [$from_date, $to_date];
+$params = array($from_date, $to_date);
 
 if ($division_filter !== 'all' && !empty($division_filter)) {
     $sql .= " AND d.id = ?";
     $params[] = (int)$division_filter;
 }
-
 $sql .= " ORDER BY r.report_date DESC, r.id DESC";
 
-$stmt = $conn->prepare($sql);
-$stmt->execute($params);
-$reports = $stmt->fetchAll(PDO::FETCH_ASSOC);
+try {
+    $stmt = $conn->prepare($sql);
+    $stmt->execute($params);
+    $reports = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    if (!is_array($reports)) $reports = array();
+} catch (Exception $e) {
+    $reports = array();
+}
 
-// Calculate stats
 $total_reports = count($reports);
 $avg_eff = 0;
 $total_prod = 0;
@@ -47,7 +49,6 @@ foreach ($reports as $r) {
 }
 $avg_eff = $total_reports > 0 ? round(($avg_eff / $total_reports) * 100, 1) : 0;
 
-// Get current user
 $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
 ?>
 <!DOCTYPE html>
@@ -58,7 +59,6 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
     <title>Reports - Hameedia</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
-        /* Same styles as before */
         * { margin: 0; padding: 0; box-sizing: border-box; }
         :root {
             --primary: #217346;
@@ -125,9 +125,35 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             gap: 10px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.05);
         }
-        .topbar .logo-mark { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: var(--primary-dark); }
-        .topbar .logo-mark img { height: 30px; width: auto; display: block; }
-        .topnav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .topbar .logo-mark { 
+            display: flex; 
+            align-items: center; 
+            gap: 12px; 
+            font-weight: 800; 
+            font-size: 20px; 
+            color: var(--primary-dark);
+            text-decoration: none;
+        }
+        .topbar .logo-mark .logo-icon { 
+            font-size: 32px;
+            background: var(--primary);
+            color: #fff;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 18px;
+        }
+        .topbar .logo-mark .logo-text {
+            letter-spacing: -0.5px;
+        }
+        .topbar .logo-mark .logo-text span {
+            color: var(--primary);
+        }
+        .topnav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
         .topnav a {
             color: var(--steel);
             text-decoration: none;
@@ -317,7 +343,6 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             .filter-row input, .filter-row select { min-width: unset; }
             .kpi-row { grid-template-columns: 1fr 1fr; }
             .topnav a { padding: 6px 12px; font-size: 13px; }
-            .topbar .logo-mark img { height: 26px; }
             .weather-bar { padding: 8px 16px; justify-content: center; flex-wrap: wrap; }
         }
         @media (max-width: 480px) { .kpi-row { grid-template-columns: 1fr; } }
@@ -331,9 +356,10 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
     </div>
 
     <div class="topbar">
-        <div class="logo-mark">
-            <img src="assets/img/ham_logo.png" alt="Hameedia" onerror="this.style.display='none'">
-        </div>
+        <a href="dashboard.php" class="logo-mark">
+            <span class="logo-icon">H</span>
+            <span class="logo-text">HAMEEDIA</span>
+        </a>
         <nav class="topnav">
             <a href="dashboard.php">Dashboard</a>
             <a href="reports.php" class="active">Reports</a>
@@ -354,7 +380,6 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
     </div>
 
     <div class="wrap">
-        <!-- Back Button -->
         <a href="#" class="back-button" onclick="history.back(); return false;">
             ← Back
         </a>
@@ -373,11 +398,13 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                 <label>Devition</label>
                 <select id="rep-division">
                     <option value="all" <?php echo $division_filter === 'all' ? 'selected' : ''; ?>>All devitions</option>
+                    <?php if (!empty($divisions)): ?>
                     <?php foreach ($divisions as $div): ?>
                     <option value="<?php echo $div['id']; ?>" <?php echo $division_filter == $div['id'] ? 'selected' : ''; ?>>
                         <?php echo htmlspecialchars($div['name']); ?>
                     </option>
                     <?php endforeach; ?>
+                    <?php endif; ?>
                 </select>
             </div>
             <button class="btn-outline" onclick="applyFilters()">Apply</button>
@@ -413,7 +440,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                     ?>
                     <tr>
                         <td><?php echo date('Y-m-d', strtotime($report['report_date'])); ?></td>
-                        <td><?php echo htmlspecialchars($report['division_name']); ?></td>
+                        <td><?php echo htmlspecialchars($report['division_name'] ?? 'Unknown'); ?></td>
                         <td><?php echo 'Component #' . ($report['unit_id'] ?? 'N/A'); ?></td>
                         <td><?php echo number_format($report['day_total'] ?? 0, 0); ?></td>
                         <td class="<?php echo $eff_class; ?>"><?php echo number_format($eff, 1); ?>%</td>

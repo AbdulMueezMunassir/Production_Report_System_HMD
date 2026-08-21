@@ -1,7 +1,7 @@
 <?php
-// index.php - Updated to use PDO (getDB) instead of getDBConnection()
+// index.php - Login Page WITH LOGO
 session_start();
-require_once 'config/database.php'; // <-- This loads the new database.php
+require_once 'config/database.php';
 
 // Check if already logged in
 if (isset($_SESSION['user_id']) && isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
@@ -18,28 +18,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($username) || empty($password)) {
         $error = 'Please enter username and password';
     } else {
-        $conn = getDB(); // <--- THIS IS THE FIXED FUNCTION CALL
-
-        // Check user
+        $conn = getDB();
         $stmt = $conn->prepare("SELECT id, username, password, full_name, role FROM users WHERE username = ?");
         $stmt->execute([$username]);
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
         
-        if ($user) {
-            // Verify password
-            if (password_verify($password, $user['password'])) {
-                // Login successful
-                $_SESSION['user_id'] = $user['id'];
-                $_SESSION['username'] = $user['username'];
-                $_SESSION['full_name'] = $user['full_name'];
-                $_SESSION['role'] = $user['role'];
-                $_SESSION['logged_in'] = true;
-                
-                header('Location: dashboard.php');
-                exit;
-            } else {
-                $error = 'Invalid username or password';
-            }
+        if ($user && password_verify($password, $user['password'])) {
+            $_SESSION['user_id'] = $user['id'];
+            $_SESSION['username'] = $user['username'];
+            $_SESSION['full_name'] = $user['full_name'];
+            $_SESSION['role'] = $user['role'];
+            $_SESSION['logged_in'] = true;
+            header('Location: dashboard.php');
+            exit;
         } else {
             $error = 'Invalid username or password';
         }
@@ -51,10 +42,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Production Report - Login</title>
+    <title>Hameedia - Production Report Login</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        /* [Keep the exact CSS from previous message here - unchanged] */
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: 'Inter', sans-serif;
@@ -123,19 +113,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             justify-content: center;
             width: 80px;
             height: 80px;
-            background: rgba(255,255,255,0.15);
+            background: var(--primary, #217346);
             border-radius: 24px;
-            font-size: 40px;
+            font-size: 36px;
             margin-bottom: 16px;
             border: 1px solid rgba(255,255,255,0.25);
             animation: pulse 2s infinite;
+            color: #fff;
+            font-weight: 800;
         }
         @keyframes pulse {
             0%, 100% { transform: scale(1); }
             50% { transform: scale(1.05); }
         }
-        .logo-section h1 { color: #fff; font-size: 28px; font-weight: 700; }
-        .logo-section .subtitle { color: rgba(255,255,255,0.8); font-size: 14px; margin-top: 4px; }
+        .logo-section h1 { 
+            color: #fff; 
+            font-size: 32px; 
+            font-weight: 800;
+            letter-spacing: -0.5px;
+        }
+        .logo-section h1 span {
+            color: #4ade80;
+        }
+        .logo-section .subtitle { 
+            color: rgba(255,255,255,0.8); 
+            font-size: 14px; 
+            margin-top: 4px;
+            font-weight: 500;
+        }
         .error-message {
             background: rgba(255,0,0,0.15);
             border: 1px solid rgba(255,0,0,0.2);
@@ -203,9 +208,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             box-shadow: 0 20px 40px -12px rgba(33,115,70,0.5);
             background: linear-gradient(135deg, #217346 0%, #2d8f4e 100%);
         }
-        .btn-login:active {
-            transform: translateY(0px);
-        }
+        .btn-login:active { transform: translateY(0px); }
         .btn-login .btn-content {
             display: flex;
             align-items: center;
@@ -229,8 +232,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
         @media (max-width: 480px) {
             .glass-container { padding: 32px 24px 28px; }
-            .logo-section h1 { font-size: 24px; }
-            .logo-icon { width: 60px; height: 60px; font-size: 30px; }
+            .logo-section h1 { font-size: 26px; }
+            .logo-icon { width: 60px; height: 60px; font-size: 28px; }
         }
     </style>
 </head>
@@ -244,9 +247,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <div class="login-wrapper">
         <div class="glass-container">
             <div class="logo-section">
-                <div class="logo-icon">📊</div>
-                <h1>Production Report</h1>
-                <p class="subtitle">Hameedia - Hourly Production System</p>
+                <div class="logo-icon">H</div>
+                <h1>HAMEEDIA</h1>
+                <p class="subtitle">Production Report - Hourly Production System</p>
             </div>
 
             <?php if (!empty($error)): ?>
@@ -298,7 +301,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         setInterval(updateClock, 1000);
 
         document.getElementById('loginForm').addEventListener('submit', function(e) {
-            console.log('Form submitted');
             const btn = document.getElementById('loginBtn');
             btn.innerHTML = '<span class="btn-content">⏳ Signing in...</span>';
             btn.disabled = true;

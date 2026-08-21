@@ -1,5 +1,5 @@
 <?php
-// users.php - Users Management Page with Glass Morphism (FIXED)
+// users.php - Users Management Page - WITH LOGO
 require_once 'config/database.php';
 require_once 'includes/auth.php';
 require_once 'includes/functions.php';
@@ -12,95 +12,8 @@ if (!isAdmin()) {
     exit;
 }
 
-$conn = getDB(); // FIXED: Use getDB() instead of getDBConnection()
+$conn = getDB();
 $users = getAllUsers($conn);
-
-// Handle AJAX requests
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
-    header('Content-Type: application/json');
-    
-    $action = $_POST['action'];
-    $response = ['success' => false, 'message' => ''];
-    
-    if ($action === 'add_user') {
-        $username = trim($_POST['username'] ?? '');
-        $password = $_POST['password'] ?? '';
-        $full_name = trim($_POST['full_name'] ?? '');
-        $role = $_POST['role'] ?? 'user';
-        
-        if (empty($username) || empty($password) || empty($full_name)) {
-            $response['message'] = 'All fields are required';
-        } elseif (strlen($password) < 6) {
-            $response['message'] = 'Password must be at least 6 characters';
-        } else {
-            $check = $conn->prepare("SELECT id FROM users WHERE username = ?");
-            $check->execute([$username]);
-            $result = $check->fetch(PDO::FETCH_ASSOC);
-            
-            if ($result) {
-                $response['message'] = 'Username already exists';
-            } else {
-                if (createUser($conn, $username, $password, $full_name, $role)) {
-                    $response['success'] = true;
-                    $response['message'] = 'User created successfully';
-                } else {
-                    $response['message'] = 'Failed to create user';
-                }
-            }
-        }
-    } elseif ($action === 'delete_user') {
-        $user_id = (int)($_POST['user_id'] ?? 0);
-        
-        if ($user_id <= 0) {
-            $response['message'] = 'Invalid user ID';
-        } else {
-            $check = $conn->prepare("SELECT role FROM users WHERE id = ?");
-            $check->execute([$user_id]);
-            $user = $check->fetch(PDO::FETCH_ASSOC);
-            
-            if ($user && $user['role'] === 'admin') {
-                $response['message'] = 'Cannot delete admin user';
-            } else {
-                if (deleteUser($conn, $user_id)) {
-                    $response['success'] = true;
-                    $response['message'] = 'User deleted successfully';
-                } else {
-                    $response['message'] = 'Failed to delete user';
-                }
-            }
-        }
-    } elseif ($action === 'reset_password') {
-        $user_id = (int)($_POST['user_id'] ?? 0);
-        $new_password = $_POST['password'] ?? '';
-        
-        if (empty($new_password) || strlen($new_password) < 6) {
-            $response['message'] = 'Password must be at least 6 characters';
-        } else {
-            $check = $conn->prepare("SELECT id FROM users WHERE id = ?");
-            $check->execute([$user_id]);
-            $result = $check->fetch(PDO::FETCH_ASSOC);
-            
-            if ($result) {
-                $hash = password_hash($new_password, PASSWORD_DEFAULT);
-                $stmt = $conn->prepare("UPDATE users SET password = ? WHERE id = ?");
-                $stmt->execute([$hash, $user_id]);
-                
-                if ($stmt->rowCount() > 0) {
-                    $response['success'] = true;
-                    $response['message'] = 'Password reset successfully';
-                } else {
-                    $response['message'] = 'Failed to reset password';
-                }
-            } else {
-                $response['message'] = 'User not found';
-            }
-        }
-    }
-    
-    echo json_encode($response);
-    exit;
-}
-
 $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
 ?>
 <!DOCTYPE html>
@@ -136,7 +49,6 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             color: var(--text);
             position: relative;
         }
-        
         .bg-shapes {
             position: fixed;
             top: 0;
@@ -178,9 +90,35 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             gap: 10px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.05);
         }
-        .topbar .logo-mark { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: var(--primary-dark); }
-        .topbar .logo-mark img { height: 30px; width: auto; display: block; }
-        .topnav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .topbar .logo-mark { 
+            display: flex; 
+            align-items: center; 
+            gap: 12px; 
+            font-weight: 800; 
+            font-size: 20px; 
+            color: var(--primary-dark);
+            text-decoration: none;
+        }
+        .topbar .logo-mark .logo-icon { 
+            font-size: 32px;
+            background: var(--primary);
+            color: #fff;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 18px;
+        }
+        .topbar .logo-mark .logo-text {
+            letter-spacing: -0.5px;
+        }
+        .topbar .logo-mark .logo-text span {
+            color: var(--primary);
+        }
+        .topnav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
         .topnav a {
             color: var(--steel);
             text-decoration: none;
@@ -247,9 +185,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             align-items: end;
             transition: all 0.3s ease;
         }
-        .add-user-form:hover {
-            box-shadow: 0 12px 40px rgba(0,0,0,0.1);
-        }
+        .add-user-form:hover { box-shadow: 0 12px 40px rgba(0,0,0,0.1); }
         .add-user-form .field { display: flex; flex-direction: column; gap: 4px; }
         .add-user-form .field label { font-size: 13px; font-weight: 700; color: var(--steel); }
         .add-user-form input, .add-user-form select {
@@ -429,7 +365,6 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             .add-user-form .btn-amber { width: 100%; }
             .users-table { overflow-x: auto; }
             .topnav a { padding: 6px 12px; font-size: 13px; }
-            .topbar .logo-mark img { height: 26px; }
         }
     </style>
 </head>
@@ -441,9 +376,10 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
     </div>
 
     <div class="topbar">
-        <div class="logo-mark">
-            <img src="assets/img/ham_logo.png" alt="Hameedia" onerror="this.style.display='none'">
-        </div>
+        <a href="dashboard.php" class="logo-mark">
+            <span class="logo-icon">H</span>
+            <span class="logo-text">HAMEEDIA</span>
+        </a>
         <nav class="topnav">
             <a href="dashboard.php">Dashboard</a>
             <a href="reports.php">Reports</a>
@@ -462,7 +398,6 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
     </div>
 
     <div class="wrap">
-        <!-- Back Button -->
         <a href="#" class="back-button" onclick="history.back(); return false;">
             ← Back
         </a>
@@ -585,9 +520,18 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
 
         function showToast(message, type) {
             const toast = document.getElementById('toast');
-            toast.textContent = message;
-            toast.className = 'toast ' + type + ' show';
-            setTimeout(() => { toast.className = 'toast'; }, 3000);
+            if (!toast) {
+                const newToast = document.createElement('div');
+                newToast.id = 'toast';
+                newToast.className = 'toast ' + type;
+                newToast.textContent = message;
+                document.body.appendChild(newToast);
+                setTimeout(() => { newToast.className = 'toast'; }, 3000);
+            } else {
+                toast.textContent = message;
+                toast.className = 'toast ' + type + ' show';
+                setTimeout(() => { toast.className = 'toast'; }, 3000);
+            }
         }
 
         function addUser() {

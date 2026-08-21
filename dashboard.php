@@ -1,5 +1,5 @@
 <?php
-// dashboard.php - With Back Button and Proper Layout
+// dashboard.php - WITH LOGO
 require_once 'config/database.php';
 require_once 'includes/auth.php';
 require_once 'includes/functions.php';
@@ -9,14 +9,21 @@ requireLogin();
 $conn = getDB();
 $date = isset($_GET['date']) ? $_GET['date'] : date('Y-m-d');
 
+// Get divisions – ensure it's always an array
 $divisions = getDivisions($conn);
-$division_stats = [];
+if (!is_array($divisions)) {
+    $divisions = array();
+}
+
+$division_stats = array();
 
 foreach ($divisions as $div) {
+    if ($div['name'] === 'Coat') continue;
     $division_stats[$div['id']] = getDivisionStats($conn, $div['id'], $date, 11);
 }
 
 $factory_eff = getFactoryEfficiency($conn, $date, 11);
+$current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -77,6 +84,7 @@ $factory_eff = getFactoryEfficiency($conn, $date, 11);
             50% { transform: translate(-40px, 40px) scale(0.9); }
             75% { transform: translate(30px, 30px) scale(1.05); }
         }
+        
         .topbar {
             position: relative;
             z-index: 10;
@@ -92,9 +100,35 @@ $factory_eff = getFactoryEfficiency($conn, $date, 11);
             gap: 10px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.05);
         }
-        .topbar .logo-mark { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: var(--primary-dark); }
-        .topbar .logo-mark img { height: 30px; width: auto; display: block; }
-        .topnav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .topbar .logo-mark { 
+            display: flex; 
+            align-items: center; 
+            gap: 12px; 
+            font-weight: 800; 
+            font-size: 20px; 
+            color: var(--primary-dark);
+            text-decoration: none;
+        }
+        .topbar .logo-mark .logo-icon { 
+            font-size: 32px;
+            background: var(--primary);
+            color: #fff;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 18px;
+        }
+        .topbar .logo-mark .logo-text {
+            letter-spacing: -0.5px;
+        }
+        .topbar .logo-mark .logo-text span {
+            color: var(--primary);
+        }
+        .topnav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
         .topnav a {
             color: var(--steel);
             text-decoration: none;
@@ -153,7 +187,7 @@ $factory_eff = getFactoryEfficiency($conn, $date, 11);
         
         .division-grid {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(3, 1fr);
             gap: 18px;
             margin-bottom: 30px;
         }
@@ -189,30 +223,6 @@ $factory_eff = getFactoryEfficiency($conn, $date, 11);
         .status-active { background: rgba(33,115,70,0.15); color: var(--primary); }
         .status-inactive { background: rgba(0,0,0,0.05); color: #999; }
         
-        /* Back Button */
-        .back-button {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 18px;
-            background: var(--glass-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid var(--glass-border);
-            border-radius: 10px;
-            color: var(--text-dark);
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 14px;
-            transition: all 0.3s ease;
-            margin-bottom: 20px;
-        }
-        .back-button:hover {
-            background: rgba(255,255,255,0.3);
-            transform: translateX(-4px);
-            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
-        }
-        
         @media (max-width: 1024px) { .division-grid { grid-template-columns: repeat(2, 1fr); } }
         @media (max-width: 768px) {
             .topbar { padding: 10px 16px; flex-direction: column; align-items: stretch; gap: 8px; }
@@ -226,7 +236,6 @@ $factory_eff = getFactoryEfficiency($conn, $date, 11);
             .division-card .icon { font-size: 30px; }
             .division-card .efficiency .value { font-size: 24px; }
             .topnav a { padding: 6px 12px; font-size: 13px; }
-            .topbar .logo-mark img { height: 26px; }
         }
         @media (max-width: 480px) {
             .division-grid { grid-template-columns: 1fr; }
@@ -242,22 +251,22 @@ $factory_eff = getFactoryEfficiency($conn, $date, 11);
     </div>
 
     <div class="topbar">
-        <div class="logo-mark">
-            <img src="assets/img/ham_logo.png" alt="Hameedia" onerror="this.style.display='none'">
-        </div>
+        <a href="dashboard.php" class="logo-mark">
+            <span class="logo-icon">H</span>
+            <span class="logo-text">HAMEEDIA</span>
+        </a>
         <nav class="topnav">
             <a href="dashboard.php" class="active">Dashboard</a>
-            
+            <a href="analytics.php">Analytics</a>
             <a href="reports.php">Reports</a>
             <?php if (isAdmin()): ?>
-            <a href="analytics.php">Analytics</a>
             <a href="users.php">Users</a>
             <?php endif; ?>
         </nav>
         <div class="right">
             <span class="live-chip"><span class="live-dot"></span><span id="live-clock">--:--</span></span>
             <span class="date-display"><?php echo date('M d, Y'); ?></span>
-            <span class="user-name"><?php echo htmlspecialchars($_SESSION['full_name'] ?? $_SESSION['username']); ?></span>
+            <span class="user-name"><?php echo htmlspecialchars($current_user); ?></span>
             <?php if (isAdmin()): ?>
             <span class="admin-badge">Admin</span>
             <?php endif; ?>
@@ -266,11 +275,6 @@ $factory_eff = getFactoryEfficiency($conn, $date, 11);
     </div>
 
     <div class="container">
-        <!-- Back Button -->
-        <a href="#" class="back-button" onclick="history.back(); return false;">
-            ← Back
-        </a>
-
         <div class="factory-card">
             <div class="left">
                 <div class="icon">🏭</div>
@@ -280,14 +284,19 @@ $factory_eff = getFactoryEfficiency($conn, $date, 11);
                 </div>
             </div>
             <div class="right">
+                <?php if (!empty($divisions)): ?>
                 <?php foreach ($divisions as $div): 
-                    $stats = $division_stats[$div['id']] ?? ['efficiency' => 0];
+                    if ($div['name'] === 'Coat') continue;
+                    $stats = isset($division_stats[$div['id']]) ? $division_stats[$div['id']] : ['efficiency' => 0];
                 ?>
                 <div class="stat">
                     <div class="label"><?php echo htmlspecialchars($div['name']); ?></div>
                     <div class="number"><?php echo $stats['efficiency'] > 0 ? $stats['efficiency'] . '%' : '-'; ?></div>
                 </div>
                 <?php endforeach; ?>
+                <?php else: ?>
+                <div class="stat"><div class="label">No divisions</div><div class="number">-</div></div>
+                <?php endif; ?>
             </div>
         </div>
 
@@ -295,13 +304,21 @@ $factory_eff = getFactoryEfficiency($conn, $date, 11);
             Select a deviation
             <span class="sub">Live efficiency for the selected report date</span>
         </div>
+        
+        <?php if (empty($divisions)): ?>
+        <div style="text-align:center; padding:40px; background:var(--glass-bg); border-radius:var(--border-radius);">
+            <p style="color:var(--steel); font-size:16px;">No divisions found. Please run the installer to set up the system.</p>
+            <a href="install.php" style="display:inline-block; margin-top:15px; padding:10px 30px; background:var(--primary); color:#fff; text-decoration:none; border-radius:8px;">Run Installer</a>
+        </div>
+        <?php else: ?>
         <div class="division-grid">
             <?php 
-            $icons = ['Shirt' => '👔', 'Trouser' => '👖', 'Coat' => '🧥', 'Assembly' => '🏭'];
+            $icons = ['Shirt' => '👔', 'Trouser' => '👖', 'Assembly' => '🏭'];
             foreach ($divisions as $div): 
-                $stats = $division_stats[$div['id']] ?? ['total_units' => 0, 'setup_units' => 0, 'efficiency' => 0, 'has_data' => false];
+                if ($div['name'] === 'Coat') continue;
+                $stats = isset($division_stats[$div['id']]) ? $division_stats[$div['id']] : ['total_units' => 0, 'setup_units' => 0, 'efficiency' => 0, 'has_data' => false];
                 $eff_percent = min($stats['efficiency'], 100);
-                $icon = $icons[$div['name']] ?? '📋';
+                $icon = isset($icons[$div['name']]) ? $icons[$div['name']] : '📋';
                 $status_class = $stats['has_data'] ? 'status-active' : 'status-inactive';
                 $status_text = $stats['has_data'] ? 'Active' : 'Inactive';
             ?>
@@ -327,6 +344,7 @@ $factory_eff = getFactoryEfficiency($conn, $date, 11);
             </a>
             <?php endforeach; ?>
         </div>
+        <?php endif; ?>
     </div>
 
     <script>

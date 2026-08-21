@@ -1,5 +1,5 @@
 <?php
-// analytics.php - Analytics Dashboard with Charts
+// analytics.php - Analytics Dashboard with Charts - WITH LOGO
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/functions.php';
@@ -15,82 +15,81 @@ $start_date = isset($_GET['start']) ? $_GET['start'] : date('Y-m-d', strtotime('
 
 // --- Data for charts ---
 
-// 1. Hourly Production Progress - Component Unit (today's data for a specific division, e.g., Trouser)
+// 1. Hourly Production Progress - Component Unit
 $today = date('Y-m-d');
-$division_id = 2; // Trouser (adjust as needed)
+$division_id = 2; // Trouser
 $components = getComponents($conn, $division_id);
-$hourly_data_component = [];
+if (!is_array($components)) $components = array();
+
+$hourly_data_component = array();
 if (!empty($components)) {
-    $first_component = $components[0]; // Use first component for demo
+    $first_component = $components[0];
     $data = getReportData($conn, $division_id, $first_component['id'], $today);
-    $hourly_data_component = [];
     for ($h = 1; $h <= 11; $h++) {
         $hourly_data_component[] = $data["hour_$h"] ?? 0;
     }
 }
 
-// 2. Hourly Production Progress - Assemble Unit (assembly division)
+// 2. Hourly Production Progress - Assemble Unit
 $assembly_division_id = 4; // Assembly
 $assembly_components = getComponents($conn, $assembly_division_id);
-$hourly_data_assembly = [];
+if (!is_array($assembly_components)) $assembly_components = array();
+
+$hourly_data_assembly = array();
 if (!empty($assembly_components)) {
     $first_assembly = $assembly_components[0];
     $data = getReportData($conn, $assembly_division_id, $first_assembly['id'], $today);
-    $hourly_data_assembly = [];
     for ($h = 1; $h <= 11; $h++) {
         $hourly_data_assembly[] = $data["hour_$h"] ?? 0;
     }
 }
 
 // 3. Monthly Production Trend (last 30 days)
-$monthly_production = [];
-$monthly_efficiency = [];
-$monthly_dhu = [];
-$date_range = [];
+$monthly_production = array();
+$monthly_efficiency = array();
+$monthly_dhu = array();
+$date_range = array();
 for ($i = 0; $i < 30; $i++) {
     $date = date('Y-m-d', strtotime("-$i days", strtotime($end_date)));
     $date_range[] = date('d-M', strtotime($date));
-    // Get all reports for this date
-    $stmt = $conn->prepare("SELECT SUM(day_total) as total, AVG(acvd_eff) as eff FROM production_reports WHERE report_date = ?");
-    $stmt->execute([$date]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
-    $monthly_production[] = (float)($row['total'] ?? 0);
-    $monthly_efficiency[] = (float)($row['eff'] ?? 0) * 100; // convert to percentage
-    // Mock DHU - for demo, random between 1-8%
+    try {
+        $stmt = $conn->prepare("SELECT SUM(day_total) as total, AVG(acvd_eff) as eff FROM production_reports WHERE report_date = ?");
+        $stmt->execute([$date]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        $monthly_production[] = (float)($row['total'] ?? 0);
+        $monthly_efficiency[] = (float)($row['eff'] ?? 0) * 100;
+    } catch (Exception $e) {
+        $monthly_production[] = 0;
+        $monthly_efficiency[] = 0;
+    }
     $monthly_dhu[] = round(rand(1, 8), 1);
 }
-// Reverse to have chronological order
 $date_range = array_reverse($date_range);
 $monthly_production = array_reverse($monthly_production);
 $monthly_efficiency = array_reverse($monthly_efficiency);
 $monthly_dhu = array_reverse($monthly_dhu);
 
 // 4. Category Distribution (Efficiency by Division)
-$category_data = [];
+$category_data = array();
 $divisions = getDivisions($conn);
+if (!is_array($divisions)) $divisions = array();
 foreach ($divisions as $div) {
     $stats = getDivisionStats($conn, $div['id'], $today, 11);
-    $category_data[$div['name']] = $stats['efficiency'];
+    $category_data[$div['name']] = $stats['efficiency'] ?? 0;
 }
 
-// 5. Production PCS - Progress - Component Unit (like first chart but with more data points)
-// We'll reuse the hourly data for the first component
+// 5. Production PCS - Progress
 $progress_data = $hourly_data_component;
 $progress_labels = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'];
-// Pad to 10 if less
-while (count($progress_data) < 10) {
-    $progress_data[] = 0;
-}
+while (count($progress_data) < 10) $progress_data[] = 0;
 $progress_data = array_slice($progress_data, 0, 10);
 
-// 6. Assembly Hourly Progress (like second chart)
+// 6. Assembly Hourly Progress
 $assembly_progress_data = $hourly_data_assembly;
-while (count($assembly_progress_data) < 10) {
-    $assembly_progress_data[] = 0;
-}
+while (count($assembly_progress_data) < 10) $assembly_progress_data[] = 0;
 $assembly_progress_data = array_slice($assembly_progress_data, 0, 10);
 
-// 7. Category Distribution (pie chart) - we already have $category_data
+// 7. Category Distribution (pie chart)
 $pie_labels = array_keys($category_data);
 $pie_values = array_values($category_data);
 ?>
@@ -170,9 +169,35 @@ $pie_values = array_values($category_data);
             gap: 10px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.05);
         }
-        .topbar .logo-mark { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: var(--primary-dark); }
-        .topbar .logo-mark img { height: 30px; width: auto; display: block; }
-        .topnav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .topbar .logo-mark { 
+            display: flex; 
+            align-items: center; 
+            gap: 12px; 
+            font-weight: 800; 
+            font-size: 20px; 
+            color: var(--primary-dark);
+            text-decoration: none;
+        }
+        .topbar .logo-mark .logo-icon { 
+            font-size: 32px;
+            background: var(--primary);
+            color: #fff;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 18px;
+        }
+        .topbar .logo-mark .logo-text {
+            letter-spacing: -0.5px;
+        }
+        .topbar .logo-mark .logo-text span {
+            color: var(--primary);
+        }
+        .topnav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
         .topnav a {
             color: var(--steel);
             text-decoration: none;
@@ -333,7 +358,6 @@ $pie_values = array_values($category_data);
             .chart-card canvas { height: 150px !important; }
             .weather-bar { padding: 8px 16px; justify-content: center; flex-wrap: wrap; }
             .topnav a { padding: 6px 12px; font-size: 13px; }
-            .topbar .logo-mark img { height: 26px; }
         }
     </style>
 </head>
@@ -345,12 +369,12 @@ $pie_values = array_values($category_data);
     </div>
 
     <div class="topbar">
-        <div class="logo-mark">
-            <img src="assets/img/ham_logo.png" alt="Hameedia" onerror="this.style.display='none'">
-        </div>
+        <a href="dashboard.php" class="logo-mark">
+            <span class="logo-icon">H</span>
+            <span class="logo-text">HAMEEDIA</span>
+        </a>
         <nav class="topnav">
-            <a href="dashboard.php">Divisions</a>
-            
+            <a href="dashboard.php">Dashboard</a>
             <a href="reports.php">Reports</a>
             <?php if (isAdmin()): ?>
             <a href="analytics.php" class="active">Analytics</a>
@@ -384,7 +408,7 @@ $pie_values = array_values($category_data);
         </div>
 
         <div class="chart-grid">
-            <!-- Chart 1: Production PCS - Progress - Component Unit -->
+            <!-- Chart 1 -->
             <div class="chart-card">
                 <h3>📈 Production PCS - Progress - Component Unit</h3>
                 <div class="chart-container">
@@ -392,7 +416,7 @@ $pie_values = array_values($category_data);
                 </div>
             </div>
 
-            <!-- Chart 2: Production - Hourly Progress - Assemble Unit -->
+            <!-- Chart 2 -->
             <div class="chart-card">
                 <h3>📈 Production - Hourly Progress - Assemble Unit</h3>
                 <div class="chart-container">
@@ -400,7 +424,7 @@ $pie_values = array_values($category_data);
                 </div>
             </div>
 
-            <!-- Chart 3: Month Produce PCS - Trend Line -->
+            <!-- Chart 3 -->
             <div class="chart-card full-width">
                 <h3>📊 Month Produce PCS - Trend Line</h3>
                 <div class="chart-container" style="height:200px;">
@@ -408,7 +432,7 @@ $pie_values = array_values($category_data);
                 </div>
             </div>
 
-            <!-- Chart 4: Month Efficiency - Trend Line -->
+            <!-- Chart 4 -->
             <div class="chart-card full-width">
                 <h3>📊 Month Efficiency - Trend Line</h3>
                 <div class="chart-container" style="height:200px;">
@@ -416,7 +440,7 @@ $pie_values = array_values($category_data);
                 </div>
             </div>
 
-            <!-- Chart 5: Month D.H.U Trend Line -->
+            <!-- Chart 5 -->
             <div class="chart-card full-width">
                 <h3>📊 Month D.H.U Trend Line</h3>
                 <div class="chart-container" style="height:200px;">
@@ -424,7 +448,7 @@ $pie_values = array_values($category_data);
                 </div>
             </div>
 
-            <!-- Chart 6: Category Distribution (Pie) -->
+            <!-- Chart 6 -->
             <div class="chart-card">
                 <h3>🍩 Efficiency by Division</h3>
                 <div class="chart-container">
@@ -432,7 +456,7 @@ $pie_values = array_values($category_data);
                 </div>
             </div>
 
-            <!-- Chart 7: Category Distribution (Bar) -->
+            <!-- Chart 7 -->
             <div class="chart-card">
                 <h3>📊 Efficiency by Division (Bar)</h3>
                 <div class="chart-container">
@@ -441,7 +465,6 @@ $pie_values = array_values($category_data);
             </div>
         </div>
 
-        <!-- Back Button Under Charts -->
         <div style="margin-top: 10px; text-align: left;">
             <a href="dashboard.php" class="back-button">
                 ← Back to Dashboard
@@ -476,7 +499,6 @@ $pie_values = array_values($category_data);
             window.location.href = 'analytics.php?start=' + start + '&end=' + end;
         }
 
-        // Data from PHP
         const progressLabels = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'];
         const componentData = <?php echo json_encode($progress_data); ?>;
         const assemblyData = <?php echo json_encode($assembly_progress_data); ?>;
@@ -487,12 +509,10 @@ $pie_values = array_values($category_data);
         const pieLabels = <?php echo json_encode($pie_labels); ?>;
         const pieValues = <?php echo json_encode($pie_values); ?>;
 
-        // Chart defaults
         Chart.defaults.font.family = "'Inter', sans-serif";
         Chart.defaults.font.size = 11;
         Chart.defaults.color = '#6b7a8f';
 
-        // 1. Component Progress Chart
         new Chart(document.getElementById('chartComponentProgress'), {
             type: 'line',
             data: {
@@ -505,23 +525,17 @@ $pie_values = array_values($category_data);
                     tension: 0.3,
                     fill: true,
                     pointBackgroundColor: '#217346',
-                    pointRadius: 5,
-                    pointHoverRadius: 7
+                    pointRadius: 5
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: true, position: 'top' }
-                },
-                scales: {
-                    y: { beginAtZero: true }
-                }
+                plugins: { legend: { display: true, position: 'top' } },
+                scales: { y: { beginAtZero: true } }
             }
         });
 
-        // 2. Assembly Progress Chart
         new Chart(document.getElementById('chartAssemblyProgress'), {
             type: 'line',
             data: {
@@ -534,23 +548,17 @@ $pie_values = array_values($category_data);
                     tension: 0.3,
                     fill: true,
                     pointBackgroundColor: '#764ba2',
-                    pointRadius: 5,
-                    pointHoverRadius: 7
+                    pointRadius: 5
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: true, position: 'top' }
-                },
-                scales: {
-                    y: { beginAtZero: true }
-                }
+                plugins: { legend: { display: true, position: 'top' } },
+                scales: { y: { beginAtZero: true } }
             }
         });
 
-        // 3. Monthly Production Trend
         new Chart(document.getElementById('chartMonthlyProduction'), {
             type: 'line',
             data: {
@@ -563,23 +571,17 @@ $pie_values = array_values($category_data);
                     tension: 0.4,
                     fill: true,
                     pointBackgroundColor: '#217346',
-                    pointRadius: 2,
-                    pointHoverRadius: 5
+                    pointRadius: 2
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: true, position: 'top' }
-                },
-                scales: {
-                    y: { beginAtZero: true }
-                }
+                plugins: { legend: { display: true, position: 'top' } },
+                scales: { y: { beginAtZero: true } }
             }
         });
 
-        // 4. Monthly Efficiency Trend
         new Chart(document.getElementById('chartMonthlyEfficiency'), {
             type: 'line',
             data: {
@@ -592,23 +594,17 @@ $pie_values = array_values($category_data);
                     tension: 0.4,
                     fill: true,
                     pointBackgroundColor: '#f57c00',
-                    pointRadius: 2,
-                    pointHoverRadius: 5
+                    pointRadius: 2
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: true, position: 'top' }
-                },
-                scales: {
-                    y: { beginAtZero: true, max: 100, ticks: { callback: function(v) { return v + '%'; } } }
-                }
+                plugins: { legend: { display: true, position: 'top' } },
+                scales: { y: { beginAtZero: true, max: 100, ticks: { callback: function(v) { return v + '%'; } } } }
             }
         });
 
-        // 5. Monthly DHU Trend
         new Chart(document.getElementById('chartMonthlyDHU'), {
             type: 'line',
             data: {
@@ -621,23 +617,17 @@ $pie_values = array_values($category_data);
                     tension: 0.4,
                     fill: true,
                     pointBackgroundColor: '#dc3545',
-                    pointRadius: 2,
-                    pointHoverRadius: 5
+                    pointRadius: 2
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: true, position: 'top' }
-                },
-                scales: {
-                    y: { beginAtZero: true, max: 10, ticks: { callback: function(v) { return v + '%'; } } }
-                }
+                plugins: { legend: { display: true, position: 'top' } },
+                scales: { y: { beginAtZero: true, max: 10, ticks: { callback: function(v) { return v + '%'; } } } }
             }
         });
 
-        // 6. Category Distribution (Pie)
         new Chart(document.getElementById('chartCategoryDistribution'), {
             type: 'doughnut',
             data: {
@@ -652,14 +642,11 @@ $pie_values = array_values($category_data);
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: {
-                    legend: { position: 'bottom', labels: { padding: 10, usePointStyle: true } }
-                },
+                plugins: { legend: { position: 'bottom', labels: { padding: 10, usePointStyle: true } } },
                 cutout: '60%'
             }
         });
 
-        // 7. Category Distribution (Bar)
         new Chart(document.getElementById('chartCategoryBar'), {
             type: 'bar',
             data: {
@@ -674,12 +661,8 @@ $pie_values = array_values($category_data);
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false }
-                },
-                scales: {
-                    y: { beginAtZero: true, max: 100, ticks: { callback: function(v) { return v + '%'; } } }
-                }
+                plugins: { legend: { display: false } },
+                scales: { y: { beginAtZero: true, max: 100, ticks: { callback: function(v) { return v + '%'; } } } }
             }
         });
     </script>
