@@ -1,5 +1,5 @@
 <?php
-// save_data.php - FIXED with auto-save support
+// save_data.php - COMPLETE FIXED with all formulas
 session_start();
 require_once 'config/database.php';
 require_once 'includes/auth.php';
@@ -102,6 +102,16 @@ try {
             if (saveReportData($conn, $save_data, $work_hours)) {
                 $response['success'] = true;
                 $response['message'] = 'Saved successfully';
+                $response['data'] = [
+                    'day_forecast' => number_format($save_data['day_forecast'], 0),
+                    'available_minutes' => number_format($save_data['available_minutes'], 0),
+                    'plan_minutes' => number_format($save_data['plan_minutes'], 0),
+                    'plan_eff' => number_format($save_data['plan_eff'] * 100, 1),
+                    'target_100' => number_format($save_data['target_100'], 0),
+                    'day_total' => number_format($save_data['day_total'], 0),
+                    'ern_minutes' => number_format($save_data['ern_minutes'], 1),
+                    'acvd_eff' => number_format($save_data['acvd_eff'] * 100, 1)
+                ];
             } else {
                 $response['message'] = 'Database save failed.';
             }
@@ -141,7 +151,7 @@ try {
             }
         }
         
-        // Recalculate
+        // Recalculate with proper formulas
         if ($is_assembly) {
             if ($save_data['unit_smv'] > 0 && $save_data['unit_carder'] > 0) {
                 $save_data['day_forecast'] = ($save_data['unit_carder'] * 600 / $save_data['unit_smv']) * 0.80;
