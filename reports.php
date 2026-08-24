@@ -1,5 +1,5 @@
 <?php
-// reports.php - ONLY UNIQUE SAVED REPORTS (No duplicates)
+// reports.php - WITH WORKING VIEW BUTTON
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
@@ -31,7 +31,6 @@ try {
     $stmt->execute();
     $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // Filter and rename - only keep IDs 1, 2, 7
     $divisions = [];
     foreach ($results as $div) {
         if (isset($main_divisions[$div['id']])) {
@@ -44,28 +43,27 @@ try {
 }
 
 // Build the query - ONLY for main three divisions
-// Group by devition_id, unit_id, report_date to avoid duplicates
-$sql = "SELECT r.*, d.name as division_name 
+$sql = "SELECT 
+            r.report_date, 
+            d.name as division_name, 
+            AVG(r.acvd_eff) as avg_eff,
+            SUM(r.day_total) as total_prod,
+            COUNT(DISTINCT r.unit_id) as unit_count,
+            r.devition_id,
+            GROUP_CONCAT(DISTINCT r.id) as report_ids
         FROM production_reports r 
         JOIN divisions d ON r.devition_id = d.id 
         WHERE r.report_date BETWEEN ? AND ?
         AND d.id IN (1, 2, 7)
-        AND r.day_total > 0
-        GROUP BY r.devition_id, r.unit_id, r.report_date
-        ORDER BY r.report_date DESC, r.id DESC";
+        AND r.day_total > 0";
 $params = array($from_date, $to_date);
 
 if ($division_filter !== 'all' && !empty($division_filter)) {
-    $sql = "SELECT r.*, d.name as division_name 
-            FROM production_reports r 
-            JOIN divisions d ON r.devition_id = d.id 
-            WHERE r.report_date BETWEEN ? AND ?
-            AND d.id = ?
-            AND r.day_total > 0
-            GROUP BY r.devition_id, r.unit_id, r.report_date
-            ORDER BY r.report_date DESC, r.id DESC";
-    $params = array($from_date, $to_date, (int)$division_filter);
+    $sql .= " AND d.id = ?";
+    $params[] = (int)$division_filter;
 }
+$sql .= " GROUP BY r.devition_id, r.report_date
+          ORDER BY r.report_date DESC, d.name ASC";
 
 try {
     $stmt = $conn->prepare($sql);
@@ -82,21 +80,12 @@ $total_reports = count($reports);
 $avg_eff = 0;
 $total_prod = 0;
 foreach ($reports as $r) {
-    $avg_eff += $r['acvd_eff'] ?? 0;
-    $total_prod += $r['day_total'] ?? 0;
+    $avg_eff += $r['avg_eff'] ?? 0;
+    $total_prod += $r['total_prod'] ?? 0;
 }
 $avg_eff = $total_reports > 0 ? round(($avg_eff / $total_reports) * 100, 1) : 0;
 
 $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
-
-// Debug: Get total unique records in database for main divisions
-$debug_total = 0;
-try {
-    $check = $conn->query("SELECT COUNT(DISTINCT CONCAT(devition_id, '-', unit_id, '-', report_date)) as count FROM production_reports WHERE devition_id IN (1, 2, 7) AND day_total > 0");
-    $debug_total = $check->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
-} catch (Exception $e) {
-    $debug_total = 0;
-}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -258,6 +247,21 @@ try {
         }
         .filter-row input:focus, .filter-row select:focus { outline: none; border-color: var(--primary); }
         
+        .btn-apply {
+            padding: 8px 20px;
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-family: 'Inter', sans-serif;
+            white-space: nowrap;
+        }
+        .btn-apply:hover { background: var(--primary-dark); transform: translateY(-2px); box-shadow: 0 4px 15px rgba(33,115,70,0.3); }
+        
         .btn-outline {
             padding: 8px 20px;
             border: 1px solid var(--glass-border);
@@ -271,6 +275,22 @@ try {
             font-family: 'Inter', sans-serif;
         }
         .btn-outline:hover { border-color: var(--primary); color: var(--primary); background: rgba(33,115,70,0.08); }
+        
+        .btn-view-action {
+            padding: 4px 14px;
+            background: var(--amber);
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-family: 'Inter', sans-serif;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn-view-action:hover { background: #e65100; transform: scale(1.05); }
         
         .kpi-row {
             display: grid;
@@ -315,6 +335,8 @@ try {
             color: var(--steel);
             border-bottom: 1px solid var(--glass-border);
             font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
         .table-shell td {
             padding: 10px 16px;
@@ -326,20 +348,6 @@ try {
         .eff-bad { color: var(--bad); font-weight: 700; }
         .eff-avg { color: var(--warning); font-weight: 700; }
         .no-data { text-align: center; padding: 40px; color: var(--steel); font-weight: 500; }
-        .btn-view {
-            padding: 4px 12px;
-            background: var(--primary);
-            color: #fff;
-            border: none;
-            border-radius: 4px;
-            text-decoration: none;
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-            display: inline-block;
-        }
-        .btn-view:hover { background: var(--primary-dark); }
         
         .back-button {
             display: inline-flex;
@@ -382,15 +390,6 @@ try {
         .weather-bar .temp { font-weight: 700; color: var(--text-dark); }
         .weather-bar .weather-icon { font-size: 18px; }
         
-        .debug-info {
-            background: rgba(255, 193, 7, 0.1);
-            border: 1px solid rgba(255, 193, 7, 0.3);
-            padding: 8px 16px;
-            border-radius: 8px;
-            margin-bottom: 16px;
-            font-size: 13px;
-            color: #856404;
-        }
         .debug-success {
             background: rgba(40, 167, 69, 0.1);
             border: 1px solid rgba(40, 167, 69, 0.3);
@@ -400,7 +399,13 @@ try {
             font-size: 13px;
             color: #155724;
         }
-        .debug-success strong { color: #155724; }
+        
+        .filter-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
         
         @media (max-width: 768px) {
             .topbar { padding: 10px 16px; flex-direction: column; align-items: stretch; gap: 8px; }
@@ -409,9 +414,12 @@ try {
             .wrap { padding: 16px; }
             .filter-row { flex-direction: column; align-items: stretch; }
             .filter-row input, .filter-row select { min-width: unset; }
+            .filter-actions { flex-direction: row; flex-wrap: wrap; width: 100%; }
+            .filter-actions button { flex: 1; min-width: 80px; }
             .kpi-row { grid-template-columns: 1fr 1fr; }
             .topnav a { padding: 6px 12px; font-size: 13px; }
             .weather-bar { padding: 8px 16px; justify-content: center; flex-wrap: wrap; }
+            .table-shell { overflow-x: auto; }
         }
         @media (max-width: 480px) { .kpi-row { grid-template-columns: 1fr; } }
     </style>
@@ -459,22 +467,16 @@ try {
             </div>
         </div>
 
-        <?php if ($debug_total > 0 && $total_reports == 0): ?>
-        <div class="debug-info">
-            ⚠️ There are <strong><?php echo $debug_total; ?></strong> total unique records in the database, but none match your current filter. 
-            Try clicking "View All Records" or adjust your date range.
-        </div>
-        <?php endif; ?>
-
-        <?php if ($total_reports > 0): ?>
-        <div class="debug-success">
-            ✅ Found <strong><?php echo $total_reports; ?></strong> unique reports matching your filter.
-        </div>
-        <?php endif; ?>
-
+        <!-- Filter Row -->
         <div class="filter-row">
-            <div class="field"><label>From</label><input id="rep-from" type="date" value="<?php echo $from_date; ?>"></div>
-            <div class="field"><label>To</label><input id="rep-to" type="date" value="<?php echo $to_date; ?>"></div>
+            <div class="field">
+                <label>From</label>
+                <input id="rep-from" type="date" value="<?php echo $from_date; ?>">
+            </div>
+            <div class="field">
+                <label>To</label>
+                <input id="rep-to" type="date" value="<?php echo $to_date; ?>">
+            </div>
             <div class="field">
                 <label>Devition</label>
                 <select id="rep-division">
@@ -488,10 +490,18 @@ try {
                     <?php endif; ?>
                 </select>
             </div>
-            <button class="btn-outline" onclick="applyFilters()">Apply</button>
-            <button class="btn-outline" onclick="viewAllRecords()">View All Records</button>
-            <button class="btn-outline" onclick="viewToday()">View Today</button>
+            <div class="filter-actions">
+                <button class="btn-apply" onclick="applyFilters()">Apply</button>
+                <button class="btn-outline" onclick="viewAllRecords()">View All</button>
+                <button class="btn-outline" onclick="viewToday()">Today</button>
+            </div>
         </div>
+
+        <?php if ($total_reports > 0): ?>
+        <div class="debug-success">
+            ✅ Found <strong><?php echo $total_reports; ?></strong> reports matching your filter.
+        </div>
+        <?php endif; ?>
 
         <div class="kpi-row" id="rep-kpis">
             <div class="kpi-card"><div class="number"><?php echo $total_reports; ?></div><div class="label">Total Reports</div></div>
@@ -506,59 +516,31 @@ try {
                     <tr>
                         <th style="text-align:left;">Date</th>
                         <th style="text-align:left;">Devition</th>
-                        <th style="text-align:left;">Component</th>
-                        <th>Day Total</th>
                         <th>Achieved Eff</th>
                         <th style="text-align:center;">Action</th>
                     </tr>
                 </thead>
                 <tbody id="rep-body">
                     <?php if (empty($reports)): ?>
-                    <tr><td colspan="6" class="no-data">
-                        <?php if ($debug_total > 0): ?>
-                            No reports match your current filter. 
-                            <br><small>Total unique records in database: <?php echo $debug_total; ?></small>
-                            <br><small>Try clicking "View All Records" or adjusting the date range.</small>
-                        <?php else: ?>
-                            No reports found. Please add data in a Devition and click "Save All".
-                        <?php endif; ?>
+                    <tr><td colspan="4" class="no-data">
+                        No reports found. Please add data in a Devition and click "Save All".
                     </td></tr>
                     <?php else: ?>
-                    <?php 
-                    $displayed = array();
-                    foreach ($reports as $report): 
-                        // Skip duplicates
-                        $key = $report['devition_id'] . '-' . $report['unit_id'] . '-' . $report['report_date'];
-                        if (in_array($key, $displayed)) continue;
-                        $displayed[] = $key;
-                        
-                        $eff = ($report['acvd_eff'] ?? 0) * 100;
+                    <?php foreach ($reports as $report): 
+                        $eff = ($report['avg_eff'] ?? 0) * 100;
                         $eff_class = $eff >= 70 ? 'eff-good' : ($eff >= 50 ? 'eff-avg' : 'eff-bad');
-                        // Get component name
-                        $component_name = 'Unit #' . ($report['unit_id'] ?? 'N/A');
-                        try {
-                            $comp_stmt = $conn->prepare("SELECT name FROM components WHERE id = ?");
-                            $comp_stmt->execute([$report['unit_id']]);
-                            $comp = $comp_stmt->fetch(PDO::FETCH_ASSOC);
-                            if ($comp) {
-                                $component_name = $comp['name'];
-                            }
-                        } catch (Exception $e) {
-                            // Ignore
-                        }
+                        $division_name = htmlspecialchars($report['division_name'] ?? 'Unknown');
+                        if ($division_name == 'Shirt Assembly') $division_name = 'Assembly';
                         
-                        // Format division name
-                        $div_name = $report['division_name'] ?? 'Unknown';
-                        if ($div_name == 'Shirt Assembly') $div_name = 'Assembly';
+                        // Build view URL with parameters - using division ID and date
+                        $view_url = 'view_report.php?date=' . $report['report_date'] . '&division=' . $report['devition_id'];
                     ?>
                     <tr>
                         <td><?php echo date('Y-m-d', strtotime($report['report_date'])); ?></td>
-                        <td><?php echo htmlspecialchars($div_name); ?></td>
-                        <td><?php echo htmlspecialchars($component_name); ?></td>
-                        <td><?php echo number_format($report['day_total'] ?? 0, 0); ?></td>
+                        <td><?php echo $division_name; ?></td>
                         <td class="<?php echo $eff_class; ?>"><?php echo number_format($eff, 1); ?>%</td>
                         <td style="text-align:center;">
-                            <a href="view_report.php?id=<?php echo $report['id']; ?>" class="btn-view">View</a>
+                            <a href="<?php echo $view_url; ?>" class="btn-view-action">View</a>
                         </td>
                     </tr>
                     <?php endforeach; ?>
@@ -606,6 +588,16 @@ try {
             var today = new Date().toISOString().split('T')[0];
             window.location.href = 'reports.php?from=' + today + '&to=' + today + '&division=all';
         }
+
+        // Enter key to apply filters
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                var active = document.activeElement;
+                if (active && (active.id === 'rep-from' || active.id === 'rep-to' || active.id === 'rep-division')) {
+                    applyFilters();
+                }
+            }
+        });
 
         // Set default date to today if empty
         document.addEventListener('DOMContentLoaded', function() {

@@ -60,6 +60,8 @@ function calcDayForecast80($carder, $sectionSmv) {
     return ($carder * 600 / $sectionSmv) * TARGET_80;
 }
 
+
+
 function calcAssemblyEarnedMinutes($dayTotal, $ttlSamPc) {
     return $dayTotal * $ttlSamPc;
 }
