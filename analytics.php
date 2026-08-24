@@ -1,6 +1,5 @@
 <?php
-// analytics.php - Analytics Dashboard with 4 Screens (Right to Left Slider)
-// Uses REAL saved data from production_reports table
+// analytics.php - Analytics Dashboard with Vertical Marquee/Slider (4 Screens)
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/functions.php';
@@ -13,24 +12,18 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
 $today = date('Y-m-d');
 $work_hours = 11;
 
-// Get ONLY main three divisions (Shirt=1, Trouser=2, Assembly=7)
+// Get divisions
 $divisions = [];
 try {
-    $stmt = $conn->prepare("SELECT * FROM divisions WHERE id IN (1, 2, 7) ORDER BY FIELD(id, 1, 2, 7)");
+    $stmt = $conn->prepare("SELECT * FROM divisions WHERE id IN (1, 2, 3, 4, 5, 6, 7) ORDER BY FIELD(id, 1, 2, 3, 4, 5, 6, 7)");
     $stmt->execute();
     $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    $divisions = [];
-    foreach ($results as $div) {
-        if ($div['id'] == 7) {
-            $div['name'] = 'Assembly';
-        }
-        $divisions[] = $div;
-    }
+    $divisions = $results;
 } catch (Exception $e) {
     $divisions = array();
 }
 
-// Function to get hourly data for a division from saved reports
+// Function to get hourly data for a division
 function getDivisionChartData($conn, $division_id, $date, $work_hours) {
     $components = getComponents($conn, $division_id);
     if (!is_array($components) || empty($components)) {
@@ -60,72 +53,44 @@ function getDivisionChartData($conn, $division_id, $date, $work_hours) {
     return $data;
 }
 
-// Get hourly data for each division from saved reports
+// Get hourly data for each division
 $shirt_data = getDivisionChartData($conn, 1, $today, $work_hours);
+$shirt_mtm_data = getDivisionChartData($conn, 4, $today, $work_hours);
 $trouser_data = getDivisionChartData($conn, 2, $today, $work_hours);
+$trouser_mtm_data = getDivisionChartData($conn, 5, $today, $work_hours);
+$coat_data = getDivisionChartData($conn, 3, $today, $work_hours);
+$coat_mtm_data = getDivisionChartData($conn, 6, $today, $work_hours);
 $assembly_data = getDivisionChartData($conn, 7, $today, $work_hours);
 
-// If no data for today, try to get data from the most recent date that has data
+// If no data for today, try to get data from the most recent date
 $hasData = (array_sum($shirt_data) > 0 || array_sum($trouser_data) > 0 || array_sum($assembly_data) > 0);
 
-// If no data exists, show sample data
 if (!$hasData) {
-    // Check if there's any data in the database at all
     try {
-        $check = $conn->query("SELECT report_date FROM production_reports WHERE devition_id IN (1, 2, 7) ORDER BY report_date DESC LIMIT 1");
+        $check = $conn->query("SELECT report_date FROM production_reports WHERE devition_id IN (1, 2, 3, 4, 5, 6, 7) ORDER BY report_date DESC LIMIT 1");
         $last_date = $check->fetch(PDO::FETCH_ASSOC);
         if ($last_date) {
             $last_date = $last_date['report_date'];
             $shirt_data = getDivisionChartData($conn, 1, $last_date, $work_hours);
+            $shirt_mtm_data = getDivisionChartData($conn, 4, $last_date, $work_hours);
             $trouser_data = getDivisionChartData($conn, 2, $last_date, $work_hours);
+            $trouser_mtm_data = getDivisionChartData($conn, 5, $last_date, $work_hours);
+            $coat_data = getDivisionChartData($conn, 3, $last_date, $work_hours);
+            $coat_mtm_data = getDivisionChartData($conn, 6, $last_date, $work_hours);
             $assembly_data = getDivisionChartData($conn, 7, $last_date, $work_hours);
-            $hasData = (array_sum($shirt_data) > 0 || array_sum($trouser_data) > 0 || array_sum($assembly_data) > 0);
         }
-    } catch (Exception $e) {
-        // Ignore
-    }
+    } catch (Exception $e) {}
 }
 
 // If still no data, use sample data
-if (!$hasData) {
+if (array_sum($shirt_data) == 0) {
     $shirt_data = [85, 120, 95, 110, 78, 90, 105, 88, 92, 78];
+    $shirt_mtm_data = [45, 60, 55, 70, 48, 52, 65, 58, 62, 48];
     $trouser_data = [70, 95, 80, 90, 65, 75, 85, 72, 78, 65];
+    $trouser_mtm_data = [35, 50, 40, 55, 38, 42, 55, 48, 52, 38];
+    $coat_data = [50, 70, 55, 65, 45, 55, 60, 52, 58, 45];
+    $coat_mtm_data = [25, 40, 30, 45, 28, 32, 45, 38, 42, 28];
     $assembly_data = [120, 180, 150, 200, 140, 160, 190, 170, 175, 140];
-}
-
-// Get monthly trend data (last 30 days) from saved reports
-$monthly_labels = array();
-$monthly_production = array();
-$monthly_efficiency = array();
-$monthly_dhu = array();
-
-for ($i = 29; $i >= 0; $i--) {
-    $date = date('Y-m-d', strtotime("-$i days"));
-    $monthly_labels[] = date('d-M', strtotime($date));
-    
-    try {
-        $stmt = $conn->prepare("SELECT SUM(day_total) as total, AVG(acvd_eff) as eff FROM production_reports WHERE report_date = ? AND devition_id IN (1, 2, 7)");
-        $stmt->execute([$date]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        $monthly_production[] = (float)($row['total'] ?? 0);
-        $monthly_efficiency[] = (float)($row['eff'] ?? 0) * 100;
-        $monthly_dhu[] = round(rand(1, 8), 1);
-    } catch (Exception $e) {
-        $monthly_production[] = 0;
-        $monthly_efficiency[] = 0;
-        $monthly_dhu[] = 0;
-    }
-}
-
-// Get category distribution (efficiency by division) from saved reports
-$category_labels = array();
-$category_values = array();
-$category_colors = ['#217346', '#E3A730', '#4facfe'];
-
-foreach ($divisions as $div) {
-    $stats = getDivisionStats($conn, $div['id'], $today, $work_hours);
-    $category_labels[] = $div['name'];
-    $category_values[] = $stats['efficiency'] ?? 0;
 }
 ?>
 <!DOCTYPE html>
@@ -274,6 +239,7 @@ foreach ($divisions as $div) {
             margin-bottom: 20px;
             flex-wrap: wrap;
             gap: 12px;
+            flex-shrink: 0;
         }
         .page-header .title h2 { font-size: 24px; font-weight: 800; color: var(--text-dark); }
         .page-header .title p { color: var(--steel); font-size: 14px; font-weight: 500; margin-top: 4px; }
@@ -297,6 +263,7 @@ foreach ($divisions as $div) {
         .btn-secondary { background: rgba(255,255,255,0.5); color: var(--text-dark); border: 1px solid var(--glass-border); }
         .btn-secondary:hover { background: rgba(255,255,255,0.8); }
 
+        /* Vertical Slider Container */
         .slider-container {
             position: relative;
             width: 100%;
@@ -312,15 +279,16 @@ foreach ($divisions as $div) {
         
         .slides-wrapper {
             display: flex;
-            width: 400%;
-            height: 100%;
-            transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
-            transform: translateX(0);
+            flex-direction: column;
+            width: 100%;
+            height: 400%;
+            transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+            transform: translateY(0);
         }
         
         .slide {
-            width: 25%;
-            height: 100%;
+            width: 100%;
+            height: 25%;
             padding: 30px;
             overflow-y: auto;
             flex-shrink: 0;
@@ -365,7 +333,7 @@ foreach ($divisions as $div) {
         .slide .chart-card .chart-container {
             flex: 1;
             position: relative;
-            min-height: 200px;
+            min-height: 180px;
         }
         
         .slide .chart-card canvas {
@@ -373,6 +341,7 @@ foreach ($divisions as $div) {
             height: 100% !important;
         }
 
+        /* Assembly slide - full width chart */
         .slide-assembly .chart-grid {
             grid-template-columns: 1fr;
         }
@@ -380,21 +349,23 @@ foreach ($divisions as $div) {
             grid-column: 1 / -1;
         }
         .slide-assembly .chart-container {
-            min-height: 300px;
+            min-height: 250px;
         }
 
+        /* Navigation Controls - Vertical */
         .slider-nav {
             position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
             display: flex;
+            flex-direction: column;
             gap: 12px;
             z-index: 20;
             background: rgba(255,255,255,0.2);
             backdrop-filter: blur(10px);
             -webkit-backdrop-filter: blur(10px);
-            padding: 10px 20px;
+            padding: 12px 10px;
             border-radius: 30px;
             border: 1px solid var(--glass-border);
         }
@@ -411,7 +382,7 @@ foreach ($divisions as $div) {
         
         .slider-nav .dot.active {
             background: var(--primary);
-            transform: scale(1.2);
+            transform: scale(1.3);
         }
         
         .slider-nav .dot:hover {
@@ -421,14 +392,16 @@ foreach ($divisions as $div) {
         
         .slider-arrows {
             position: absolute;
-            top: 50%;
-            transform: translateY(-50%);
+            left: 50%;
+            transform: translateX(-50%);
             width: 100%;
             display: flex;
             justify-content: space-between;
             padding: 0 10px;
             z-index: 15;
             pointer-events: none;
+            top: 50%;
+            transform: translate(-50%, -50%);
         }
         
         .slider-arrows button {
@@ -438,9 +411,9 @@ foreach ($divisions as $div) {
             -webkit-backdrop-filter: blur(10px);
             border: 1px solid var(--glass-border);
             border-radius: 50%;
-            width: 44px;
-            height: 44px;
-            font-size: 20px;
+            width: 40px;
+            height: 40px;
+            font-size: 18px;
             cursor: pointer;
             transition: all 0.3s;
             color: var(--text-dark);
@@ -452,6 +425,10 @@ foreach ($divisions as $div) {
         .slider-arrows button:hover {
             background: rgba(255,255,255,0.6);
             transform: scale(1.05);
+        }
+        
+        .slider-arrows button:active {
+            transform: scale(0.95);
         }
         
         .slide-indicator {
@@ -485,6 +462,7 @@ foreach ($divisions as $div) {
             font-weight: 600;
             font-size: 14px;
             transition: all 0.3s ease;
+            flex-shrink: 0;
         }
         .back-button:hover {
             background: rgba(255,255,255,0.3);
@@ -517,7 +495,12 @@ foreach ($divisions as $div) {
                 height: calc(100vh - 250px);
             }
             .slide-assembly .chart-container {
-                min-height: 250px;
+                min-height: 200px;
+            }
+            .slider-arrows button {
+                width: 32px;
+                height: 32px;
+                font-size: 14px;
             }
         }
         @media (max-width: 768px) {
@@ -529,19 +512,17 @@ foreach ($divisions as $div) {
             .page-header .controls { width: 100%; flex-wrap: wrap; }
             .slide { padding: 12px; }
             .slide .chart-card { padding: 12px; }
-            .slider-arrows button { width: 32px; height: 32px; font-size: 14px; }
-            .topnav a { padding: 6px 12px; font-size: 13px; }
-            .slider-nav { padding: 8px 14px; gap: 8px; }
+            .slider-arrows { display: none; }
+            .slider-nav { right: 10px; padding: 8px 6px; gap: 8px; }
             .slider-nav .dot { width: 10px; height: 10px; }
             .slide-indicator { font-size: 11px; padding: 4px 10px; top: 12px; right: 16px; }
+            .topnav a { padding: 6px 12px; font-size: 13px; }
         }
         @media (max-width: 480px) {
-            .slide-assembly .chart-container {
-                min-height: 200px;
-            }
-            .slide .chart-card .chart-container {
-                min-height: 150px;
-            }
+            .slide-assembly .chart-container { min-height: 180px; }
+            .slide .chart-card .chart-container { min-height: 140px; }
+            .slider-nav { right: 6px; padding: 6px 4px; gap: 6px; }
+            .slider-nav .dot { width: 8px; height: 8px; }
         }
     </style>
 </head>
@@ -591,14 +572,14 @@ foreach ($divisions as $div) {
             <div class="slide-indicator" id="slideIndicator">1 / 4</div>
             
             <div class="slider-arrows">
-                <button id="prevSlide" onclick="changeSlide(-1)">‹</button>
-                <button id="nextSlide" onclick="changeSlide(1)">›</button>
+                <button id="prevSlide" onclick="changeSlide(-1)">▲</button>
+                <button id="nextSlide" onclick="changeSlide(1)">▼</button>
             </div>
 
             <div class="slides-wrapper" id="slidesWrapper">
-                <!-- ====== SLIDE 1: Shirt ====== -->
+                <!-- ====== SLIDE 1: Shirt & Shirt MTM ====== -->
                 <div class="slide">
-                    <h3>👔 Shirt - Hourly Production</h3>
+                    <h3>👔 Shirt &amp; Shirt MTM - Hourly Production</h3>
                     <div class="chart-grid">
                         <div class="chart-card">
                             <h4>Shirt Devition</h4>
@@ -607,17 +588,17 @@ foreach ($divisions as $div) {
                             </div>
                         </div>
                         <div class="chart-card">
-                            <h4>Shirt - Production PCS Progress</h4>
+                            <h4>Shirt MTM</h4>
                             <div class="chart-container">
-                                <canvas id="chartShirtProgress"></canvas>
+                                <canvas id="chartShirtMTM"></canvas>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- ====== SLIDE 2: Trouser ====== -->
+                <!-- ====== SLIDE 2: Trouser & Trouser MTM ====== -->
                 <div class="slide">
-                    <h3>👖 Trouser - Hourly Production</h3>
+                    <h3>👖 Trouser &amp; Trouser MTM - Hourly Production</h3>
                     <div class="chart-grid">
                         <div class="chart-card">
                             <h4>Trouser Devition</h4>
@@ -626,15 +607,34 @@ foreach ($divisions as $div) {
                             </div>
                         </div>
                         <div class="chart-card">
-                            <h4>Trouser - Production PCS Progress</h4>
+                            <h4>Trouser MTM</h4>
                             <div class="chart-container">
-                                <canvas id="chartTrouserProgress"></canvas>
+                                <canvas id="chartTrouserMTM"></canvas>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- ====== SLIDE 3: Assembly ====== -->
+                <!-- ====== SLIDE 3: Coat & Coat MTM ====== -->
+                <div class="slide">
+                    <h3>🧥 Coat &amp; Coat MTM - Hourly Production</h3>
+                    <div class="chart-grid">
+                        <div class="chart-card">
+                            <h4>Coat Devition</h4>
+                            <div class="chart-container">
+                                <canvas id="chartCoat"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-card">
+                            <h4>Coat MTM</h4>
+                            <div class="chart-container">
+                                <canvas id="chartCoatMTM"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ====== SLIDE 4: Assembly ====== -->
                 <div class="slide slide-assembly">
                     <h3>🏭 Assembly - Hourly Production</h3>
                     <div class="chart-grid">
@@ -642,25 +642,6 @@ foreach ($divisions as $div) {
                             <h4>Assembly Unit</h4>
                             <div class="chart-container">
                                 <canvas id="chartAssembly"></canvas>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- ====== SLIDE 4: Monthly Trends & Distribution ====== -->
-                <div class="slide">
-                    <h3>📊 Monthly Trends &amp; Distribution</h3>
-                    <div class="chart-grid" style="grid-template-columns: 1fr 1fr; height: calc(100% - 60px);">
-                        <div class="chart-card">
-                            <h4>Month Efficiency - Trend Line</h4>
-                            <div class="chart-container">
-                                <canvas id="chartMonthlyEfficiency"></canvas>
-                            </div>
-                        </div>
-                        <div class="chart-card">
-                            <h4>Efficiency by Division</h4>
-                            <div class="chart-container">
-                                <canvas id="chartCategoryDistribution"></canvas>
                             </div>
                         </div>
                     </div>
@@ -678,14 +659,15 @@ foreach ($divisions as $div) {
 
     <script>
         // ============================================================
-        // SLIDER FUNCTIONS
+        // SLIDER FUNCTIONS - Vertical (Up/Down)
         // ============================================================
         let currentSlide = 0;
         const totalSlides = 4;
 
         function updateSlide() {
             const wrapper = document.getElementById('slidesWrapper');
-            wrapper.style.transform = `translateX(-${currentSlide * 25}%)`;
+            // Move up: translateY(-25% * currentSlide)
+            wrapper.style.transform = `translateY(-${currentSlide * 25}%)`;
             
             document.getElementById('slideIndicator').textContent = `${currentSlide + 1} / ${totalSlides}`;
             
@@ -697,35 +679,66 @@ foreach ($divisions as $div) {
         function changeSlide(direction) {
             currentSlide = (currentSlide + direction + totalSlides) % totalSlides;
             updateSlide();
+            resetAutoSlide();
         }
 
         function goToSlide(index) {
             currentSlide = index;
             updateSlide();
+            resetAutoSlide();
         }
 
-        // Keyboard navigation
+        // Keyboard navigation (Up/Down arrows)
         document.addEventListener('keydown', function(e) {
-            if (e.key === 'ArrowRight') changeSlide(1);
-            if (e.key === 'ArrowLeft') changeSlide(-1);
+            if (e.key === 'ArrowDown') changeSlide(1);
+            if (e.key === 'ArrowUp') changeSlide(-1);
         });
 
-        // Touch support for mobile
-        let touchStartX = 0;
-        let touchEndX = 0;
+        // Touch support for mobile (vertical swipe)
+        let touchStartY = 0;
+        let touchEndY = 0;
 
         document.getElementById('sliderContainer').addEventListener('touchstart', function(e) {
-            touchStartX = e.changedTouches[0].screenX;
+            touchStartY = e.changedTouches[0].screenY;
         }, {passive: true});
 
         document.getElementById('sliderContainer').addEventListener('touchend', function(e) {
-            touchEndX = e.changedTouches[0].screenX;
-            const diff = touchStartX - touchEndX;
+            touchEndY = e.changedTouches[0].screenY;
+            const diff = touchStartY - touchEndY;
             if (Math.abs(diff) > 50) {
-                if (diff > 0) changeSlide(1);
-                else changeSlide(-1);
+                if (diff > 0) changeSlide(1); // Swipe up = next slide
+                else changeSlide(-1); // Swipe down = previous slide
             }
         }, {passive: true});
+
+        // Mouse wheel support
+        let wheelTimeout = false;
+        document.getElementById('sliderContainer').addEventListener('wheel', function(e) {
+            e.preventDefault();
+            if (wheelTimeout) return;
+            wheelTimeout = true;
+            setTimeout(() => { wheelTimeout = false; }, 800);
+            
+            if (e.deltaY > 0) {
+                changeSlide(1);
+            } else {
+                changeSlide(-1);
+            }
+        }, {passive: false});
+
+        // ============================================================
+        // AUTO-SLIDE (Up/Down)
+        // ============================================================
+        let autoSlideInterval;
+
+        function startAutoSlide() {
+            autoSlideInterval = setInterval(() => changeSlide(1), 8000);
+        }
+
+        function resetAutoSlide() {
+            clearInterval(autoSlideInterval);
+            startAutoSlide();
+        }
 
         // ============================================================
         // CLOCK FUNCTION
@@ -742,22 +755,17 @@ foreach ($divisions as $div) {
         setInterval(updateClock, 60000);
 
         // ============================================================
-        // CHART DATA FROM SAVED REPORTS
+        // CHART DATA
         // ============================================================
         const chartLabels = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'];
         
         const shirtData = <?php echo json_encode($shirt_data); ?>;
+        const shirtMTMData = <?php echo json_encode($shirt_mtm_data); ?>;
         const trouserData = <?php echo json_encode($trouser_data); ?>;
+        const trouserMTMData = <?php echo json_encode($trouser_mtm_data); ?>;
+        const coatData = <?php echo json_encode($coat_data); ?>;
+        const coatMTMData = <?php echo json_encode($coat_mtm_data); ?>;
         const assemblyData = <?php echo json_encode($assembly_data); ?>;
-        
-        const monthlyLabels = <?php echo json_encode($monthly_labels); ?>;
-        const monthlyEfficiency = <?php echo json_encode($monthly_efficiency); ?>;
-        const monthlyProduction = <?php echo json_encode($monthly_production); ?>;
-        const monthlyDHU = <?php echo json_encode($monthly_dhu); ?>;
-        
-        const categoryLabels = <?php echo json_encode($category_labels); ?>;
-        const categoryValues = <?php echo json_encode($category_values); ?>;
-        const categoryColors = ['#217346', '#E3A730', '#4facfe'];
 
         Chart.defaults.font.family = "'Inter', sans-serif";
         Chart.defaults.font.size = 11;
@@ -798,120 +806,24 @@ foreach ($divisions as $div) {
             });
         }
 
-        function createLineChart(id, data, label, color, fillColor) {
-            return new Chart(document.getElementById(id), {
-                type: 'line',
-                data: {
-                    labels: monthlyLabels,
-                    datasets: [{
-                        label: label,
-                        data: data,
-                        borderColor: color,
-                        backgroundColor: fillColor || 'rgba(33, 115, 70, 0.1)',
-                        tension: 0.3,
-                        fill: true,
-                        pointBackgroundColor: color,
-                        pointRadius: 2,
-                        pointHoverRadius: 5
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { 
-                            display: true, 
-                            position: 'top',
-                            labels: { usePointStyle: true, padding: 10 }
-                        }
-                    },
-                    scales: {
-                        y: { 
-                            beginAtZero: true,
-                            ticks: {
-                                callback: function(value) { return value; }
-                            }
-                        },
-                        x: {
-                            ticks: {
-                                maxRotation: 45,
-                                minRotation: 45,
-                                font: { size: 8 }
-                            }
-                        }
-                    }
-                }
-            });
-        }
-
         // Chart Colors
         const colors = {
             shirt: 'rgba(33, 115, 70, 0.8)',
+            shirtMTM: 'rgba(46, 148, 104, 0.8)',
             trouser: 'rgba(227, 167, 48, 0.8)',
+            trouserMTM: 'rgba(245, 124, 0, 0.8)',
+            coat: 'rgba(118, 75, 162, 0.8)',
+            coatMTM: 'rgba(156, 39, 176, 0.8)',
             assembly: 'rgba(79, 172, 254, 0.8)'
         };
 
-        // Create all charts
+        // Create all bar charts
         createBarChart('chartShirt', shirtData, 'Pcs', colors.shirt);
+        createBarChart('chartShirtMTM', shirtMTMData, 'Pcs', colors.shirtMTM);
         createBarChart('chartTrouser', trouserData, 'Pcs', colors.trouser);
-        
-        // Shirt Progress Chart (line)
-        new Chart(document.getElementById('chartShirtProgress'), {
-            type: 'line',
-            data: {
-                labels: chartLabels,
-                datasets: [{
-                    label: 'Pcs',
-                    data: shirtData,
-                    borderColor: colors.shirt,
-                    backgroundColor: 'rgba(33, 115, 70, 0.15)',
-                    tension: 0.3,
-                    fill: true,
-                    pointBackgroundColor: colors.shirt,
-                    pointRadius: 5,
-                    pointHoverRadius: 7
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: true, position: 'top', labels: { usePointStyle: true, padding: 10 } }
-                },
-                scales: {
-                    y: { beginAtZero: true, ticks: { callback: function(value) { return value; } } }
-                }
-            }
-        });
-
-        // Trouser Progress Chart (line)
-        new Chart(document.getElementById('chartTrouserProgress'), {
-            type: 'line',
-            data: {
-                labels: chartLabels,
-                datasets: [{
-                    label: 'Pcs',
-                    data: trouserData,
-                    borderColor: colors.trouser,
-                    backgroundColor: 'rgba(227, 167, 48, 0.15)',
-                    tension: 0.3,
-                    fill: true,
-                    pointBackgroundColor: colors.trouser,
-                    pointRadius: 5,
-                    pointHoverRadius: 7
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: true, position: 'top', labels: { usePointStyle: true, padding: 10 } }
-                },
-                scales: {
-                    y: { beginAtZero: true, ticks: { callback: function(value) { return value; } } }
-                }
-            }
-        });
+        createBarChart('chartTrouserMTM', trouserMTMData, 'Pcs', colors.trouserMTM);
+        createBarChart('chartCoat', coatData, 'Pcs', colors.coat);
+        createBarChart('chartCoatMTM', coatMTMData, 'Pcs', colors.coatMTM);
         
         // Assembly chart - line chart
         new Chart(document.getElementById('chartAssembly'), {
@@ -949,47 +861,6 @@ foreach ($divisions as $div) {
             }
         });
 
-        // Monthly Efficiency Chart
-        createLineChart('chartMonthlyEfficiency', monthlyEfficiency, 'Efficiency (%)', '#f57c00', 'rgba(245, 124, 0, 0.1)');
-
-        // Category Distribution - Pie Chart
-        new Chart(document.getElementById('chartCategoryDistribution'), {
-            type: 'doughnut',
-            data: {
-                labels: categoryLabels,
-                datasets: [{
-                    data: categoryValues,
-                    backgroundColor: categoryColors,
-                    borderWidth: 2,
-                    borderColor: 'rgba(255,255,255,0.5)'
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { 
-                        position: 'bottom', 
-                        labels: { padding: 10, usePointStyle: true }
-                    }
-                },
-                cutout: '60%'
-            }
-        });
-
-        // ============================================================
-        // AUTO-SLIDE
-        // ============================================================
-        let autoSlideInterval = setInterval(() => changeSlide(1), 8000);
-
-        // Reset timer on manual navigation
-        document.querySelectorAll('.dot, #prevSlide, #nextSlide').forEach(el => {
-            el.addEventListener('click', function() {
-                clearInterval(autoSlideInterval);
-                autoSlideInterval = setInterval(() => changeSlide(1), 8000);
-            });
-        });
-
         // ============================================================
         // HANDLE WINDOW RESIZE
         // ============================================================
@@ -999,6 +870,18 @@ foreach ($divisions as $div) {
             resizeTimeout = setTimeout(() => {
                 Chart.instances.forEach(chart => chart.resize());
             }, 250);
+        });
+
+        // ============================================================
+        // START AUTO-SLIDE
+        // ============================================================
+        startAutoSlide();
+
+        // Reset timer on manual navigation
+        document.querySelectorAll('.dot, #prevSlide, #nextSlide').forEach(el => {
+            el.addEventListener('click', function() {
+                resetAutoSlide();
+            });
         });
 
         // Initial slide position
