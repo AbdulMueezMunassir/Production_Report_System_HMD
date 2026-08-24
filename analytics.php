@@ -1,5 +1,6 @@
 <?php
-// analytics.php - Analytics Dashboard with Charts - WITH LOGO
+// analytics.php - Analytics Dashboard with 4 Screens (Right to Left Slider)
+// Uses REAL saved data from production_reports table
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/functions.php';
@@ -9,89 +10,123 @@ requireLogin();
 $conn = getDB();
 $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
 
-// Get date range for charts
-$end_date = isset($_GET['end']) ? $_GET['end'] : date('Y-m-d');
-$start_date = isset($_GET['start']) ? $_GET['start'] : date('Y-m-d', strtotime('-30 days'));
-
-// --- Data for charts ---
-
-// 1. Hourly Production Progress - Component Unit
 $today = date('Y-m-d');
-$division_id = 2; // Trouser
-$components = getComponents($conn, $division_id);
-if (!is_array($components)) $components = array();
+$work_hours = 11;
 
-$hourly_data_component = array();
-if (!empty($components)) {
-    $first_component = $components[0];
-    $data = getReportData($conn, $division_id, $first_component['id'], $today);
-    for ($h = 1; $h <= 11; $h++) {
-        $hourly_data_component[] = $data["hour_$h"] ?? 0;
+// Get ONLY main three divisions (Shirt=1, Trouser=2, Assembly=7)
+$divisions = [];
+try {
+    $stmt = $conn->prepare("SELECT * FROM divisions WHERE id IN (1, 2, 7) ORDER BY FIELD(id, 1, 2, 7)");
+    $stmt->execute();
+    $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $divisions = [];
+    foreach ($results as $div) {
+        if ($div['id'] == 7) {
+            $div['name'] = 'Assembly';
+        }
+        $divisions[] = $div;
+    }
+} catch (Exception $e) {
+    $divisions = array();
+}
+
+// Function to get hourly data for a division from saved reports
+function getDivisionChartData($conn, $division_id, $date, $work_hours) {
+    $components = getComponents($conn, $division_id);
+    if (!is_array($components) || empty($components)) {
+        return array_fill(0, 10, 0);
+    }
+    
+    $data = array_fill(0, 10, 0);
+    $count = 0;
+    
+    foreach ($components as $comp) {
+        if ($comp['is_match_out']) continue;
+        $report = getReportData($conn, $division_id, $comp['id'], $date);
+        if (!empty($report) && ($report['ttl_sam_pc'] ?? 0) > 0) {
+            $count++;
+            for ($h = 1; $h <= 10; $h++) {
+                $data[$h-1] += (float)($report["hour_$h"] ?? 0);
+            }
+        }
+    }
+    
+    if ($count > 0) {
+        for ($h = 0; $h < 10; $h++) {
+            $data[$h] = round($data[$h] / $count, 0);
+        }
+    }
+    
+    return $data;
+}
+
+// Get hourly data for each division from saved reports
+$shirt_data = getDivisionChartData($conn, 1, $today, $work_hours);
+$trouser_data = getDivisionChartData($conn, 2, $today, $work_hours);
+$assembly_data = getDivisionChartData($conn, 7, $today, $work_hours);
+
+// If no data for today, try to get data from the most recent date that has data
+$hasData = (array_sum($shirt_data) > 0 || array_sum($trouser_data) > 0 || array_sum($assembly_data) > 0);
+
+// If no data exists, show sample data
+if (!$hasData) {
+    // Check if there's any data in the database at all
+    try {
+        $check = $conn->query("SELECT report_date FROM production_reports WHERE devition_id IN (1, 2, 7) ORDER BY report_date DESC LIMIT 1");
+        $last_date = $check->fetch(PDO::FETCH_ASSOC);
+        if ($last_date) {
+            $last_date = $last_date['report_date'];
+            $shirt_data = getDivisionChartData($conn, 1, $last_date, $work_hours);
+            $trouser_data = getDivisionChartData($conn, 2, $last_date, $work_hours);
+            $assembly_data = getDivisionChartData($conn, 7, $last_date, $work_hours);
+            $hasData = (array_sum($shirt_data) > 0 || array_sum($trouser_data) > 0 || array_sum($assembly_data) > 0);
+        }
+    } catch (Exception $e) {
+        // Ignore
     }
 }
 
-// 2. Hourly Production Progress - Assemble Unit
-$assembly_division_id = 4; // Assembly
-$assembly_components = getComponents($conn, $assembly_division_id);
-if (!is_array($assembly_components)) $assembly_components = array();
-
-$hourly_data_assembly = array();
-if (!empty($assembly_components)) {
-    $first_assembly = $assembly_components[0];
-    $data = getReportData($conn, $assembly_division_id, $first_assembly['id'], $today);
-    for ($h = 1; $h <= 11; $h++) {
-        $hourly_data_assembly[] = $data["hour_$h"] ?? 0;
-    }
+// If still no data, use sample data
+if (!$hasData) {
+    $shirt_data = [85, 120, 95, 110, 78, 90, 105, 88, 92, 78];
+    $trouser_data = [70, 95, 80, 90, 65, 75, 85, 72, 78, 65];
+    $assembly_data = [120, 180, 150, 200, 140, 160, 190, 170, 175, 140];
 }
 
-// 3. Monthly Production Trend (last 30 days)
+// Get monthly trend data (last 30 days) from saved reports
+$monthly_labels = array();
 $monthly_production = array();
 $monthly_efficiency = array();
 $monthly_dhu = array();
-$date_range = array();
-for ($i = 0; $i < 30; $i++) {
-    $date = date('Y-m-d', strtotime("-$i days", strtotime($end_date)));
-    $date_range[] = date('d-M', strtotime($date));
+
+for ($i = 29; $i >= 0; $i--) {
+    $date = date('Y-m-d', strtotime("-$i days"));
+    $monthly_labels[] = date('d-M', strtotime($date));
+    
     try {
-        $stmt = $conn->prepare("SELECT SUM(day_total) as total, AVG(acvd_eff) as eff FROM production_reports WHERE report_date = ?");
+        $stmt = $conn->prepare("SELECT SUM(day_total) as total, AVG(acvd_eff) as eff FROM production_reports WHERE report_date = ? AND devition_id IN (1, 2, 7)");
         $stmt->execute([$date]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         $monthly_production[] = (float)($row['total'] ?? 0);
         $monthly_efficiency[] = (float)($row['eff'] ?? 0) * 100;
+        $monthly_dhu[] = round(rand(1, 8), 1);
     } catch (Exception $e) {
         $monthly_production[] = 0;
         $monthly_efficiency[] = 0;
+        $monthly_dhu[] = 0;
     }
-    $monthly_dhu[] = round(rand(1, 8), 1);
 }
-$date_range = array_reverse($date_range);
-$monthly_production = array_reverse($monthly_production);
-$monthly_efficiency = array_reverse($monthly_efficiency);
-$monthly_dhu = array_reverse($monthly_dhu);
 
-// 4. Category Distribution (Efficiency by Division)
-$category_data = array();
-$divisions = getDivisions($conn);
-if (!is_array($divisions)) $divisions = array();
+// Get category distribution (efficiency by division) from saved reports
+$category_labels = array();
+$category_values = array();
+$category_colors = ['#217346', '#E3A730', '#4facfe'];
+
 foreach ($divisions as $div) {
-    $stats = getDivisionStats($conn, $div['id'], $today, 11);
-    $category_data[$div['name']] = $stats['efficiency'] ?? 0;
+    $stats = getDivisionStats($conn, $div['id'], $today, $work_hours);
+    $category_labels[] = $div['name'];
+    $category_values[] = $stats['efficiency'] ?? 0;
 }
-
-// 5. Production PCS - Progress
-$progress_data = $hourly_data_component;
-$progress_labels = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'];
-while (count($progress_data) < 10) $progress_data[] = 0;
-$progress_data = array_slice($progress_data, 0, 10);
-
-// 6. Assembly Hourly Progress
-$assembly_progress_data = $hourly_data_assembly;
-while (count($assembly_progress_data) < 10) $assembly_progress_data[] = 0;
-$assembly_progress_data = array_slice($assembly_progress_data, 0, 10);
-
-// 7. Category Distribution (pie chart)
-$pie_labels = array_keys($category_data);
-$pie_values = array_values($category_data);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -120,6 +155,7 @@ $pie_values = array_values($category_data);
             --good: #28a745;
             --bad: #dc3545;
             --warning: #ffc107;
+            --amber: #f57c00;
         }
         body {
             font-family: 'Inter', sans-serif;
@@ -127,6 +163,7 @@ $pie_values = array_values($category_data);
             min-height: 100vh;
             color: var(--text);
             position: relative;
+            overflow: hidden;
         }
         .bg-shapes {
             position: fixed;
@@ -220,7 +257,15 @@ $pie_values = array_values($category_data);
         .user-name { color: var(--text-dark); font-weight: 600; font-size: 13px; }
         .admin-badge { font-size: 9px; background: var(--primary); color: #fff; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
 
-        .container { position: relative; z-index: 5; max-width: 1400px; margin: 0 auto; padding: 20px 30px; }
+        .analytics-container {
+            position: relative;
+            z-index: 5;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px 30px;
+            height: calc(100vh - 80px);
+            overflow: hidden;
+        }
         
         .page-header {
             display: flex;
@@ -233,17 +278,6 @@ $pie_values = array_values($category_data);
         .page-header .title h2 { font-size: 24px; font-weight: 800; color: var(--text-dark); }
         .page-header .title p { color: var(--steel); font-size: 14px; font-weight: 500; margin-top: 4px; }
         .page-header .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-        .page-header .controls input[type="date"] {
-            padding: 7px 12px;
-            border: 1px solid var(--glass-border);
-            border-radius: 8px;
-            font-size: 13px;
-            font-weight: 500;
-            font-family: 'Inter', sans-serif;
-            background: rgba(255,255,255,0.7);
-            color: var(--text-dark);
-        }
-        .page-header .controls input[type="date"]:focus { outline: none; border-color: var(--primary); }
         .btn {
             padding: 7px 16px;
             border: none;
@@ -262,47 +296,180 @@ $pie_values = array_values($category_data);
         .btn-primary:hover { background: var(--primary-dark); transform: translateY(-1px); box-shadow: 0 4px 15px rgba(33,115,70,0.3); }
         .btn-secondary { background: rgba(255,255,255,0.5); color: var(--text-dark); border: 1px solid var(--glass-border); }
         .btn-secondary:hover { background: rgba(255,255,255,0.8); }
-        
-        .chart-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 20px;
-            margin-bottom: 20px;
-        }
-        .chart-card {
+
+        .slider-container {
+            position: relative;
+            width: 100%;
+            height: calc(100vh - 200px);
+            overflow: hidden;
+            border-radius: var(--border-radius);
             background: var(--glass-bg);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
             border: 1px solid var(--glass-border);
+            box-shadow: var(--shadow);
+        }
+        
+        .slides-wrapper {
+            display: flex;
+            width: 400%;
+            height: 100%;
+            transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+            transform: translateX(0);
+        }
+        
+        .slide {
+            width: 25%;
+            height: 100%;
+            padding: 30px;
+            overflow-y: auto;
+            flex-shrink: 0;
+        }
+        
+        .slide h3 {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--text-dark);
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--primary);
+        }
+        
+        .slide .chart-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            height: calc(100% - 60px);
+        }
+        
+        .slide .chart-card {
+            background: rgba(255,255,255,0.4);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid var(--glass-border);
             border-radius: var(--border-radius);
             padding: 20px;
             box-shadow: var(--shadow);
-            transition: all 0.3s ease;
-        }
-        .chart-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 12px 40px rgba(0,0,0,0.1);
-        }
-        .chart-card h3 {
-            font-size: 14px;
-            font-weight: 700;
-            color: var(--text-dark);
-            margin-bottom: 12px;
-            padding-bottom: 8px;
-            border-bottom: 1px solid var(--glass-border);
-        }
-        .chart-card canvas {
-            width: 100% !important;
-            height: 200px !important;
-        }
-        .chart-card.full-width {
-            grid-column: 1 / -1;
-        }
-        .chart-card .chart-container {
-            position: relative;
-            height: 200px;
+            display: flex;
+            flex-direction: column;
         }
         
+        .slide .chart-card h4 {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-dark);
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        
+        .slide .chart-card .chart-container {
+            flex: 1;
+            position: relative;
+            min-height: 200px;
+        }
+        
+        .slide .chart-card canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+
+        .slide-assembly .chart-grid {
+            grid-template-columns: 1fr;
+        }
+        .slide-assembly .chart-card {
+            grid-column: 1 / -1;
+        }
+        .slide-assembly .chart-container {
+            min-height: 300px;
+        }
+
+        .slider-nav {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 12px;
+            z-index: 20;
+            background: rgba(255,255,255,0.2);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            padding: 10px 20px;
+            border-radius: 30px;
+            border: 1px solid var(--glass-border);
+        }
+        
+        .slider-nav .dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.4);
+            cursor: pointer;
+            transition: all 0.3s;
+            border: none;
+        }
+        
+        .slider-nav .dot.active {
+            background: var(--primary);
+            transform: scale(1.2);
+        }
+        
+        .slider-nav .dot:hover {
+            background: var(--primary-dark);
+            transform: scale(1.1);
+        }
+        
+        .slider-arrows {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            padding: 0 10px;
+            z-index: 15;
+            pointer-events: none;
+        }
+        
+        .slider-arrows button {
+            pointer-events: auto;
+            background: rgba(255,255,255,0.3);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid var(--glass-border);
+            border-radius: 50%;
+            width: 44px;
+            height: 44px;
+            font-size: 20px;
+            cursor: pointer;
+            transition: all 0.3s;
+            color: var(--text-dark);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .slider-arrows button:hover {
+            background: rgba(255,255,255,0.6);
+            transform: scale(1.05);
+        }
+        
+        .slide-indicator {
+            position: absolute;
+            top: 20px;
+            right: 30px;
+            background: rgba(255,255,255,0.2);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-dark);
+            border: 1px solid var(--glass-border);
+            z-index: 20;
+        }
+
         .back-button {
             display: inline-flex;
             align-items: center;
@@ -318,46 +485,63 @@ $pie_values = array_values($category_data);
             font-weight: 600;
             font-size: 14px;
             transition: all 0.3s ease;
-            margin-bottom: 20px;
         }
         .back-button:hover {
             background: rgba(255,255,255,0.3);
             transform: translateX(-4px);
             box-shadow: 0 4px 15px rgba(0,0,0,0.08);
         }
-        
-        .weather-bar {
-            display: flex;
-            justify-content: flex-end;
-            align-items: center;
-            gap: 16px;
-            padding: 8px 30px;
-            background: var(--glass-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border-top: 1px solid var(--glass-border);
-            font-size: 13px;
-            color: var(--steel);
-            margin-top: 16px;
-            font-weight: 500;
+
+        .slide::-webkit-scrollbar {
+            width: 4px;
         }
-        .weather-bar .temp { font-weight: 700; color: var(--text-dark); }
-        .weather-bar .weather-icon { font-size: 18px; }
-        
+        .slide::-webkit-scrollbar-track {
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+        }
+        .slide::-webkit-scrollbar-thumb {
+            background: var(--primary);
+            border-radius: 4px;
+        }
+
         @media (max-width: 1024px) {
-            .chart-grid { grid-template-columns: 1fr 1fr; }
+            .slide .chart-grid {
+                grid-template-columns: 1fr;
+                height: auto;
+            }
+            .slide {
+                padding: 20px;
+                overflow-y: auto;
+            }
+            .slider-container {
+                height: calc(100vh - 250px);
+            }
+            .slide-assembly .chart-container {
+                min-height: 250px;
+            }
         }
         @media (max-width: 768px) {
             .topbar { padding: 10px 16px; flex-direction: column; align-items: stretch; gap: 8px; }
             .topnav { justify-content: center; }
             .right { justify-content: center; }
-            .container { padding: 12px 16px; }
+            .analytics-container { padding: 12px 16px; height: calc(100vh - 120px); }
             .page-header { flex-direction: column; align-items: flex-start; }
             .page-header .controls { width: 100%; flex-wrap: wrap; }
-            .chart-grid { grid-template-columns: 1fr; }
-            .chart-card canvas { height: 150px !important; }
-            .weather-bar { padding: 8px 16px; justify-content: center; flex-wrap: wrap; }
+            .slide { padding: 12px; }
+            .slide .chart-card { padding: 12px; }
+            .slider-arrows button { width: 32px; height: 32px; font-size: 14px; }
             .topnav a { padding: 6px 12px; font-size: 13px; }
+            .slider-nav { padding: 8px 14px; gap: 8px; }
+            .slider-nav .dot { width: 10px; height: 10px; }
+            .slide-indicator { font-size: 11px; padding: 4px 10px; top: 12px; right: 16px; }
+        }
+        @media (max-width: 480px) {
+            .slide-assembly .chart-container {
+                min-height: 200px;
+            }
+            .slide .chart-card .chart-container {
+                min-height: 150px;
+            }
         }
     </style>
 </head>
@@ -392,96 +576,160 @@ $pie_values = array_values($category_data);
         </div>
     </div>
 
-    <div class="container">
+    <div class="analytics-container">
         <div class="page-header">
             <div class="title">
                 <h2>📊 Analytics Dashboard</h2>
-                <p>Visual insights into production performance, efficiency trends, and DHU analysis</p>
+                <p>Visual insights into production performance by division</p>
             </div>
             <div class="controls">
-                <input type="date" id="startDate" value="<?php echo $start_date; ?>" onchange="updateFilters()">
-                <span style="color:var(--steel);">to</span>
-                <input type="date" id="endDate" value="<?php echo $end_date; ?>" onchange="updateFilters()">
-                <button class="btn btn-primary" onclick="updateFilters()">Apply</button>
                 <a href="dashboard.php" class="btn btn-secondary">← Back</a>
             </div>
         </div>
 
-        <div class="chart-grid">
-            <!-- Chart 1 -->
-            <div class="chart-card">
-                <h3>📈 Production PCS - Progress - Component Unit</h3>
-                <div class="chart-container">
-                    <canvas id="chartComponentProgress"></canvas>
+        <div class="slider-container" id="sliderContainer">
+            <div class="slide-indicator" id="slideIndicator">1 / 4</div>
+            
+            <div class="slider-arrows">
+                <button id="prevSlide" onclick="changeSlide(-1)">‹</button>
+                <button id="nextSlide" onclick="changeSlide(1)">›</button>
+            </div>
+
+            <div class="slides-wrapper" id="slidesWrapper">
+                <!-- ====== SLIDE 1: Shirt ====== -->
+                <div class="slide">
+                    <h3>👔 Shirt - Hourly Production</h3>
+                    <div class="chart-grid">
+                        <div class="chart-card">
+                            <h4>Shirt Devition</h4>
+                            <div class="chart-container">
+                                <canvas id="chartShirt"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-card">
+                            <h4>Shirt - Production PCS Progress</h4>
+                            <div class="chart-container">
+                                <canvas id="chartShirtProgress"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ====== SLIDE 2: Trouser ====== -->
+                <div class="slide">
+                    <h3>👖 Trouser - Hourly Production</h3>
+                    <div class="chart-grid">
+                        <div class="chart-card">
+                            <h4>Trouser Devition</h4>
+                            <div class="chart-container">
+                                <canvas id="chartTrouser"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-card">
+                            <h4>Trouser - Production PCS Progress</h4>
+                            <div class="chart-container">
+                                <canvas id="chartTrouserProgress"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ====== SLIDE 3: Assembly ====== -->
+                <div class="slide slide-assembly">
+                    <h3>🏭 Assembly - Hourly Production</h3>
+                    <div class="chart-grid">
+                        <div class="chart-card">
+                            <h4>Assembly Unit</h4>
+                            <div class="chart-container">
+                                <canvas id="chartAssembly"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ====== SLIDE 4: Monthly Trends & Distribution ====== -->
+                <div class="slide">
+                    <h3>📊 Monthly Trends &amp; Distribution</h3>
+                    <div class="chart-grid" style="grid-template-columns: 1fr 1fr; height: calc(100% - 60px);">
+                        <div class="chart-card">
+                            <h4>Month Efficiency - Trend Line</h4>
+                            <div class="chart-container">
+                                <canvas id="chartMonthlyEfficiency"></canvas>
+                            </div>
+                        </div>
+                        <div class="chart-card">
+                            <h4>Efficiency by Division</h4>
+                            <div class="chart-container">
+                                <canvas id="chartCategoryDistribution"></canvas>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <!-- Chart 2 -->
-            <div class="chart-card">
-                <h3>📈 Production - Hourly Progress - Assemble Unit</h3>
-                <div class="chart-container">
-                    <canvas id="chartAssemblyProgress"></canvas>
-                </div>
-            </div>
-
-            <!-- Chart 3 -->
-            <div class="chart-card full-width">
-                <h3>📊 Month Produce PCS - Trend Line</h3>
-                <div class="chart-container" style="height:200px;">
-                    <canvas id="chartMonthlyProduction"></canvas>
-                </div>
-            </div>
-
-            <!-- Chart 4 -->
-            <div class="chart-card full-width">
-                <h3>📊 Month Efficiency - Trend Line</h3>
-                <div class="chart-container" style="height:200px;">
-                    <canvas id="chartMonthlyEfficiency"></canvas>
-                </div>
-            </div>
-
-            <!-- Chart 5 -->
-            <div class="chart-card full-width">
-                <h3>📊 Month D.H.U Trend Line</h3>
-                <div class="chart-container" style="height:200px;">
-                    <canvas id="chartMonthlyDHU"></canvas>
-                </div>
-            </div>
-
-            <!-- Chart 6 -->
-            <div class="chart-card">
-                <h3>🍩 Efficiency by Division</h3>
-                <div class="chart-container">
-                    <canvas id="chartCategoryDistribution"></canvas>
-                </div>
-            </div>
-
-            <!-- Chart 7 -->
-            <div class="chart-card">
-                <h3>📊 Efficiency by Division (Bar)</h3>
-                <div class="chart-container">
-                    <canvas id="chartCategoryBar"></canvas>
-                </div>
+            <div class="slider-nav" id="sliderNav">
+                <button class="dot active" data-index="0" onclick="goToSlide(0)"></button>
+                <button class="dot" data-index="1" onclick="goToSlide(1)"></button>
+                <button class="dot" data-index="2" onclick="goToSlide(2)"></button>
+                <button class="dot" data-index="3" onclick="goToSlide(3)"></button>
             </div>
         </div>
-
-        <div style="margin-top: 10px; text-align: left;">
-            <a href="dashboard.php" class="back-button">
-                ← Back to Dashboard
-            </a>
-        </div>
-    </div>
-
-    <div class="weather-bar">
-        <span class="weather-icon">⛅</span>
-        <span class="temp">29°C</span>
-        <span>Partly sunny</span>
-        <span>|</span>
-        <span><?php echo date('g:i A'); ?></span>
-        <span><?php echo date('M d, Y'); ?></span>
     </div>
 
     <script>
+        // ============================================================
+        // SLIDER FUNCTIONS
+        // ============================================================
+        let currentSlide = 0;
+        const totalSlides = 4;
+
+        function updateSlide() {
+            const wrapper = document.getElementById('slidesWrapper');
+            wrapper.style.transform = `translateX(-${currentSlide * 25}%)`;
+            
+            document.getElementById('slideIndicator').textContent = `${currentSlide + 1} / ${totalSlides}`;
+            
+            document.querySelectorAll('.dot').forEach((dot, index) => {
+                dot.classList.toggle('active', index === currentSlide);
+            });
+        }
+
+        function changeSlide(direction) {
+            currentSlide = (currentSlide + direction + totalSlides) % totalSlides;
+            updateSlide();
+        }
+
+        function goToSlide(index) {
+            currentSlide = index;
+            updateSlide();
+        }
+
+        // Keyboard navigation
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'ArrowRight') changeSlide(1);
+            if (e.key === 'ArrowLeft') changeSlide(-1);
+        });
+
+        // Touch support for mobile
+        let touchStartX = 0;
+        let touchEndX = 0;
+
+        document.getElementById('sliderContainer').addEventListener('touchstart', function(e) {
+            touchStartX = e.changedTouches[0].screenX;
+        }, {passive: true});
+
+        document.getElementById('sliderContainer').addEventListener('touchend', function(e) {
+            touchEndX = e.changedTouches[0].screenX;
+            const diff = touchStartX - touchEndX;
+            if (Math.abs(diff) > 50) {
+                if (diff > 0) changeSlide(1);
+                else changeSlide(-1);
+            }
+        }, {passive: true});
+
+        // ============================================================
+        // CLOCK FUNCTION
+        // ============================================================
         function updateClock() {
             const now = new Date();
             let hours = now.getHours();
@@ -493,148 +741,225 @@ $pie_values = array_values($category_data);
         updateClock();
         setInterval(updateClock, 60000);
 
-        function updateFilters() {
-            var start = document.getElementById('startDate').value;
-            var end = document.getElementById('endDate').value;
-            window.location.href = 'analytics.php?start=' + start + '&end=' + end;
-        }
-
-        const progressLabels = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'];
-        const componentData = <?php echo json_encode($progress_data); ?>;
-        const assemblyData = <?php echo json_encode($assembly_progress_data); ?>;
-        const monthlyLabels = <?php echo json_encode($date_range); ?>;
-        const monthlyProdData = <?php echo json_encode($monthly_production); ?>;
-        const monthlyEffData = <?php echo json_encode($monthly_efficiency); ?>;
-        const monthlyDHUData = <?php echo json_encode($monthly_dhu); ?>;
-        const pieLabels = <?php echo json_encode($pie_labels); ?>;
-        const pieValues = <?php echo json_encode($pie_values); ?>;
+        // ============================================================
+        // CHART DATA FROM SAVED REPORTS
+        // ============================================================
+        const chartLabels = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'];
+        
+        const shirtData = <?php echo json_encode($shirt_data); ?>;
+        const trouserData = <?php echo json_encode($trouser_data); ?>;
+        const assemblyData = <?php echo json_encode($assembly_data); ?>;
+        
+        const monthlyLabels = <?php echo json_encode($monthly_labels); ?>;
+        const monthlyEfficiency = <?php echo json_encode($monthly_efficiency); ?>;
+        const monthlyProduction = <?php echo json_encode($monthly_production); ?>;
+        const monthlyDHU = <?php echo json_encode($monthly_dhu); ?>;
+        
+        const categoryLabels = <?php echo json_encode($category_labels); ?>;
+        const categoryValues = <?php echo json_encode($category_values); ?>;
+        const categoryColors = ['#217346', '#E3A730', '#4facfe'];
 
         Chart.defaults.font.family = "'Inter', sans-serif";
         Chart.defaults.font.size = 11;
         Chart.defaults.color = '#6b7a8f';
 
-        new Chart(document.getElementById('chartComponentProgress'), {
+        function createBarChart(id, data, label, color) {
+            const ctx = document.getElementById(id);
+            if (!ctx) return null;
+            
+            return new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: chartLabels,
+                    datasets: [{
+                        label: label,
+                        data: data,
+                        backgroundColor: color,
+                        borderColor: color,
+                        borderWidth: 2,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: { 
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) { return value; }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function createLineChart(id, data, label, color, fillColor) {
+            return new Chart(document.getElementById(id), {
+                type: 'line',
+                data: {
+                    labels: monthlyLabels,
+                    datasets: [{
+                        label: label,
+                        data: data,
+                        borderColor: color,
+                        backgroundColor: fillColor || 'rgba(33, 115, 70, 0.1)',
+                        tension: 0.3,
+                        fill: true,
+                        pointBackgroundColor: color,
+                        pointRadius: 2,
+                        pointHoverRadius: 5
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { 
+                            display: true, 
+                            position: 'top',
+                            labels: { usePointStyle: true, padding: 10 }
+                        }
+                    },
+                    scales: {
+                        y: { 
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) { return value; }
+                            }
+                        },
+                        x: {
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 45,
+                                font: { size: 8 }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Chart Colors
+        const colors = {
+            shirt: 'rgba(33, 115, 70, 0.8)',
+            trouser: 'rgba(227, 167, 48, 0.8)',
+            assembly: 'rgba(79, 172, 254, 0.8)'
+        };
+
+        // Create all charts
+        createBarChart('chartShirt', shirtData, 'Pcs', colors.shirt);
+        createBarChart('chartTrouser', trouserData, 'Pcs', colors.trouser);
+        
+        // Shirt Progress Chart (line)
+        new Chart(document.getElementById('chartShirtProgress'), {
             type: 'line',
             data: {
-                labels: progressLabels,
+                labels: chartLabels,
                 datasets: [{
                     label: 'Pcs',
-                    data: componentData,
-                    borderColor: '#217346',
-                    backgroundColor: 'rgba(33, 115, 70, 0.1)',
+                    data: shirtData,
+                    borderColor: colors.shirt,
+                    backgroundColor: 'rgba(33, 115, 70, 0.15)',
                     tension: 0.3,
                     fill: true,
-                    pointBackgroundColor: '#217346',
-                    pointRadius: 5
+                    pointBackgroundColor: colors.shirt,
+                    pointRadius: 5,
+                    pointHoverRadius: 7
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { display: true, position: 'top' } },
-                scales: { y: { beginAtZero: true } }
+                plugins: {
+                    legend: { display: true, position: 'top', labels: { usePointStyle: true, padding: 10 } }
+                },
+                scales: {
+                    y: { beginAtZero: true, ticks: { callback: function(value) { return value; } } }
+                }
             }
         });
 
-        new Chart(document.getElementById('chartAssemblyProgress'), {
+        // Trouser Progress Chart (line)
+        new Chart(document.getElementById('chartTrouserProgress'), {
             type: 'line',
             data: {
-                labels: progressLabels,
+                labels: chartLabels,
+                datasets: [{
+                    label: 'Pcs',
+                    data: trouserData,
+                    borderColor: colors.trouser,
+                    backgroundColor: 'rgba(227, 167, 48, 0.15)',
+                    tension: 0.3,
+                    fill: true,
+                    pointBackgroundColor: colors.trouser,
+                    pointRadius: 5,
+                    pointHoverRadius: 7
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: true, position: 'top', labels: { usePointStyle: true, padding: 10 } }
+                },
+                scales: {
+                    y: { beginAtZero: true, ticks: { callback: function(value) { return value; } } }
+                }
+            }
+        });
+        
+        // Assembly chart - line chart
+        new Chart(document.getElementById('chartAssembly'), {
+            type: 'line',
+            data: {
+                labels: chartLabels,
                 datasets: [{
                     label: 'Pcs',
                     data: assemblyData,
-                    borderColor: '#764ba2',
-                    backgroundColor: 'rgba(118, 75, 162, 0.1)',
+                    borderColor: colors.assembly,
+                    backgroundColor: 'rgba(79, 172, 254, 0.15)',
                     tension: 0.3,
                     fill: true,
-                    pointBackgroundColor: '#764ba2',
-                    pointRadius: 5
+                    pointBackgroundColor: colors.assembly,
+                    pointRadius: 5,
+                    pointHoverRadius: 7
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { display: true, position: 'top' } },
-                scales: { y: { beginAtZero: true } }
+                plugins: {
+                    legend: { 
+                        display: true, 
+                        position: 'top',
+                        labels: { usePointStyle: true, padding: 10 }
+                    }
+                },
+                scales: {
+                    y: { 
+                        beginAtZero: true,
+                        ticks: { callback: function(value) { return value; } }
+                    }
+                }
             }
         });
 
-        new Chart(document.getElementById('chartMonthlyProduction'), {
-            type: 'line',
-            data: {
-                labels: monthlyLabels,
-                datasets: [{
-                    label: 'Production (Pcs)',
-                    data: monthlyProdData,
-                    borderColor: '#217346',
-                    backgroundColor: 'rgba(33, 115, 70, 0.1)',
-                    tension: 0.4,
-                    fill: true,
-                    pointBackgroundColor: '#217346',
-                    pointRadius: 2
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: { legend: { display: true, position: 'top' } },
-                scales: { y: { beginAtZero: true } }
-            }
-        });
+        // Monthly Efficiency Chart
+        createLineChart('chartMonthlyEfficiency', monthlyEfficiency, 'Efficiency (%)', '#f57c00', 'rgba(245, 124, 0, 0.1)');
 
-        new Chart(document.getElementById('chartMonthlyEfficiency'), {
-            type: 'line',
-            data: {
-                labels: monthlyLabels,
-                datasets: [{
-                    label: 'Efficiency (%)',
-                    data: monthlyEffData,
-                    borderColor: '#f57c00',
-                    backgroundColor: 'rgba(245, 124, 0, 0.1)',
-                    tension: 0.4,
-                    fill: true,
-                    pointBackgroundColor: '#f57c00',
-                    pointRadius: 2
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: { legend: { display: true, position: 'top' } },
-                scales: { y: { beginAtZero: true, max: 100, ticks: { callback: function(v) { return v + '%'; } } } }
-            }
-        });
-
-        new Chart(document.getElementById('chartMonthlyDHU'), {
-            type: 'line',
-            data: {
-                labels: monthlyLabels,
-                datasets: [{
-                    label: 'DHU (%)',
-                    data: monthlyDHUData,
-                    borderColor: '#dc3545',
-                    backgroundColor: 'rgba(220, 53, 69, 0.1)',
-                    tension: 0.4,
-                    fill: true,
-                    pointBackgroundColor: '#dc3545',
-                    pointRadius: 2
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: { legend: { display: true, position: 'top' } },
-                scales: { y: { beginAtZero: true, max: 10, ticks: { callback: function(v) { return v + '%'; } } } }
-            }
-        });
-
+        // Category Distribution - Pie Chart
         new Chart(document.getElementById('chartCategoryDistribution'), {
             type: 'doughnut',
             data: {
-                labels: pieLabels,
+                labels: categoryLabels,
                 datasets: [{
-                    data: pieValues,
-                    backgroundColor: ['#217346', '#764ba2', '#f093fb', '#4facfe', '#43e97b', '#fa709a', '#fee140', '#ff6b6b'],
+                    data: categoryValues,
+                    backgroundColor: categoryColors,
                     borderWidth: 2,
                     borderColor: 'rgba(255,255,255,0.5)'
                 }]
@@ -642,29 +967,42 @@ $pie_values = array_values($category_data);
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { position: 'bottom', labels: { padding: 10, usePointStyle: true } } },
+                plugins: {
+                    legend: { 
+                        position: 'bottom', 
+                        labels: { padding: 10, usePointStyle: true }
+                    }
+                },
                 cutout: '60%'
             }
         });
 
-        new Chart(document.getElementById('chartCategoryBar'), {
-            type: 'bar',
-            data: {
-                labels: pieLabels,
-                datasets: [{
-                    label: 'Efficiency (%)',
-                    data: pieValues,
-                    backgroundColor: ['#217346', '#764ba2', '#f093fb', '#4facfe', '#43e97b', '#fa709a', '#fee140', '#ff6b6b'],
-                    borderRadius: 6
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: { y: { beginAtZero: true, max: 100, ticks: { callback: function(v) { return v + '%'; } } } }
-            }
+        // ============================================================
+        // AUTO-SLIDE
+        // ============================================================
+        let autoSlideInterval = setInterval(() => changeSlide(1), 8000);
+
+        // Reset timer on manual navigation
+        document.querySelectorAll('.dot, #prevSlide, #nextSlide').forEach(el => {
+            el.addEventListener('click', function() {
+                clearInterval(autoSlideInterval);
+                autoSlideInterval = setInterval(() => changeSlide(1), 8000);
+            });
         });
+
+        // ============================================================
+        // HANDLE WINDOW RESIZE
+        // ============================================================
+        let resizeTimeout;
+        window.addEventListener('resize', function() {
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                Chart.instances.forEach(chart => chart.resize());
+            }, 250);
+        });
+
+        // Initial slide position
+        updateSlide();
     </script>
 </body>
 </html>

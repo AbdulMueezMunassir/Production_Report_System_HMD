@@ -1,5 +1,5 @@
 <?php
-// dashboard.php - WITH LOGO
+// dashboard.php - ONLY MAIN THREE DIVISIONS (Shirt, Trouser, Assembly)
 require_once 'config/database.php';
 require_once 'includes/auth.php';
 require_once 'includes/functions.php';
@@ -9,16 +9,35 @@ requireLogin();
 $conn = getDB();
 $date = isset($_GET['date']) ? $_GET['date'] : date('Y-m-d');
 
-// Get divisions – ensure it's always an array
-$divisions = getDivisions($conn);
-if (!is_array($divisions)) {
+// Define the three main divisions with their display names
+$main_divisions = [
+    1 => 'Shirt',
+    2 => 'Trouser',
+    7 => 'Assembly'
+];
+
+$divisions = [];
+try {
+    // Get only the three main divisions
+    $stmt = $conn->prepare("SELECT * FROM divisions WHERE id IN (1, 2, 7) ORDER BY FIELD(id, 1, 2, 7)");
+    $stmt->execute();
+    $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Filter and rename - only keep IDs 1, 2, 7
+    $divisions = [];
+    foreach ($results as $div) {
+        if (isset($main_divisions[$div['id']])) {
+            $div['name'] = $main_divisions[$div['id']];
+            $divisions[] = $div;
+        }
+    }
+} catch (Exception $e) {
     $divisions = array();
 }
 
 $division_stats = array();
 
 foreach ($divisions as $div) {
-    if ($div['name'] === 'Coat') continue;
     $division_stats[$div['id']] = getDivisionStats($conn, $div['id'], $date, 11);
 }
 
@@ -286,7 +305,6 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             <div class="right">
                 <?php if (!empty($divisions)): ?>
                 <?php foreach ($divisions as $div): 
-                    if ($div['name'] === 'Coat') continue;
                     $stats = isset($division_stats[$div['id']]) ? $division_stats[$div['id']] : ['efficiency' => 0];
                 ?>
                 <div class="stat">
@@ -315,7 +333,6 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             <?php 
             $icons = ['Shirt' => '👔', 'Trouser' => '👖', 'Assembly' => '🏭'];
             foreach ($divisions as $div): 
-                if ($div['name'] === 'Coat') continue;
                 $stats = isset($division_stats[$div['id']]) ? $division_stats[$div['id']] : ['total_units' => 0, 'setup_units' => 0, 'efficiency' => 0, 'has_data' => false];
                 $eff_percent = min($stats['efficiency'], 100);
                 $icon = isset($icons[$div['name']]) ? $icons[$div['name']] : '📋';

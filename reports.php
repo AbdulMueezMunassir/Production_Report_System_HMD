@@ -1,5 +1,5 @@
 <?php
-// reports.php - WITH LOGO
+// reports.php - ONLY UNIQUE SAVED REPORTS (No duplicates)
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
@@ -12,24 +12,60 @@ requireLogin();
 
 $conn = getDB();
 
-$from_date = isset($_GET['from']) ? $_GET['from'] : date('Y-m-d', strtotime('-7 days'));
-$to_date = isset($_GET['to']) ? $_GET['to'] : date('Y-m-d');
+// Get date range - default to today if not set
+$from_date = isset($_GET['from']) && !empty($_GET['from']) ? $_GET['from'] : date('Y-m-d');
+$to_date = isset($_GET['to']) && !empty($_GET['to']) ? $_GET['to'] : date('Y-m-d');
 $division_filter = isset($_GET['division']) ? $_GET['division'] : 'all';
 
-$divisions = getDivisions($conn);
-if (!is_array($divisions)) $divisions = array();
+// Define the three main divisions with their display names
+$main_divisions = [
+    1 => 'Shirt',
+    2 => 'Trouser',
+    7 => 'Assembly'
+];
 
+// Get ONLY the three main divisions
+$divisions = [];
+try {
+    $stmt = $conn->prepare("SELECT * FROM divisions WHERE id IN (1, 2, 7) ORDER BY FIELD(id, 1, 2, 7)");
+    $stmt->execute();
+    $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Filter and rename - only keep IDs 1, 2, 7
+    $divisions = [];
+    foreach ($results as $div) {
+        if (isset($main_divisions[$div['id']])) {
+            $div['name'] = $main_divisions[$div['id']];
+            $divisions[] = $div;
+        }
+    }
+} catch (Exception $e) {
+    $divisions = array();
+}
+
+// Build the query - ONLY for main three divisions
+// Group by devition_id, unit_id, report_date to avoid duplicates
 $sql = "SELECT r.*, d.name as division_name 
         FROM production_reports r 
         JOIN divisions d ON r.devition_id = d.id 
-        WHERE r.report_date BETWEEN ? AND ?";
+        WHERE r.report_date BETWEEN ? AND ?
+        AND d.id IN (1, 2, 7)
+        AND r.day_total > 0
+        GROUP BY r.devition_id, r.unit_id, r.report_date
+        ORDER BY r.report_date DESC, r.id DESC";
 $params = array($from_date, $to_date);
 
 if ($division_filter !== 'all' && !empty($division_filter)) {
-    $sql .= " AND d.id = ?";
-    $params[] = (int)$division_filter;
+    $sql = "SELECT r.*, d.name as division_name 
+            FROM production_reports r 
+            JOIN divisions d ON r.devition_id = d.id 
+            WHERE r.report_date BETWEEN ? AND ?
+            AND d.id = ?
+            AND r.day_total > 0
+            GROUP BY r.devition_id, r.unit_id, r.report_date
+            ORDER BY r.report_date DESC, r.id DESC";
+    $params = array($from_date, $to_date, (int)$division_filter);
 }
-$sql .= " ORDER BY r.report_date DESC, r.id DESC";
 
 try {
     $stmt = $conn->prepare($sql);
@@ -37,9 +73,11 @@ try {
     $reports = $stmt->fetchAll(PDO::FETCH_ASSOC);
     if (!is_array($reports)) $reports = array();
 } catch (Exception $e) {
+    error_log("Reports query error: " . $e->getMessage());
     $reports = array();
 }
 
+// Calculate stats
 $total_reports = count($reports);
 $avg_eff = 0;
 $total_prod = 0;
@@ -50,6 +88,15 @@ foreach ($reports as $r) {
 $avg_eff = $total_reports > 0 ? round(($avg_eff / $total_reports) * 100, 1) : 0;
 
 $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
+
+// Debug: Get total unique records in database for main divisions
+$debug_total = 0;
+try {
+    $check = $conn->query("SELECT COUNT(DISTINCT CONCAT(devition_id, '-', unit_id, '-', report_date)) as count FROM production_reports WHERE devition_id IN (1, 2, 7) AND day_total > 0");
+    $debug_total = $check->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
+} catch (Exception $e) {
+    $debug_total = 0;
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -76,6 +123,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             --bad: #dc3545;
             --good: #28a745;
             --warning: #ffc107;
+            --amber: #f57c00;
         }
         body {
             font-family: 'Inter', sans-serif;
@@ -334,6 +382,26 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         .weather-bar .temp { font-weight: 700; color: var(--text-dark); }
         .weather-bar .weather-icon { font-size: 18px; }
         
+        .debug-info {
+            background: rgba(255, 193, 7, 0.1);
+            border: 1px solid rgba(255, 193, 7, 0.3);
+            padding: 8px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 13px;
+            color: #856404;
+        }
+        .debug-success {
+            background: rgba(40, 167, 69, 0.1);
+            border: 1px solid rgba(40, 167, 69, 0.3);
+            padding: 8px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 13px;
+            color: #155724;
+        }
+        .debug-success strong { color: #155724; }
+        
         @media (max-width: 768px) {
             .topbar { padding: 10px 16px; flex-direction: column; align-items: stretch; gap: 8px; }
             .topnav { justify-content: center; }
@@ -391,6 +459,19 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             </div>
         </div>
 
+        <?php if ($debug_total > 0 && $total_reports == 0): ?>
+        <div class="debug-info">
+            ⚠️ There are <strong><?php echo $debug_total; ?></strong> total unique records in the database, but none match your current filter. 
+            Try clicking "View All Records" or adjust your date range.
+        </div>
+        <?php endif; ?>
+
+        <?php if ($total_reports > 0): ?>
+        <div class="debug-success">
+            ✅ Found <strong><?php echo $total_reports; ?></strong> unique reports matching your filter.
+        </div>
+        <?php endif; ?>
+
         <div class="filter-row">
             <div class="field"><label>From</label><input id="rep-from" type="date" value="<?php echo $from_date; ?>"></div>
             <div class="field"><label>To</label><input id="rep-to" type="date" value="<?php echo $to_date; ?>"></div>
@@ -408,7 +489,8 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                 </select>
             </div>
             <button class="btn-outline" onclick="applyFilters()">Apply</button>
-            <button class="btn-outline" onclick="viewAllRecords()">View all records</button>
+            <button class="btn-outline" onclick="viewAllRecords()">View All Records</button>
+            <button class="btn-outline" onclick="viewToday()">View Today</button>
         </div>
 
         <div class="kpi-row" id="rep-kpis">
@@ -432,16 +514,47 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                 </thead>
                 <tbody id="rep-body">
                     <?php if (empty($reports)): ?>
-                    <tr><td colspan="6" class="no-data">No reports found. Please add data in a Devition and click "Save All".</td></tr>
+                    <tr><td colspan="6" class="no-data">
+                        <?php if ($debug_total > 0): ?>
+                            No reports match your current filter. 
+                            <br><small>Total unique records in database: <?php echo $debug_total; ?></small>
+                            <br><small>Try clicking "View All Records" or adjusting the date range.</small>
+                        <?php else: ?>
+                            No reports found. Please add data in a Devition and click "Save All".
+                        <?php endif; ?>
+                    </td></tr>
                     <?php else: ?>
-                    <?php foreach ($reports as $report): 
+                    <?php 
+                    $displayed = array();
+                    foreach ($reports as $report): 
+                        // Skip duplicates
+                        $key = $report['devition_id'] . '-' . $report['unit_id'] . '-' . $report['report_date'];
+                        if (in_array($key, $displayed)) continue;
+                        $displayed[] = $key;
+                        
                         $eff = ($report['acvd_eff'] ?? 0) * 100;
                         $eff_class = $eff >= 70 ? 'eff-good' : ($eff >= 50 ? 'eff-avg' : 'eff-bad');
+                        // Get component name
+                        $component_name = 'Unit #' . ($report['unit_id'] ?? 'N/A');
+                        try {
+                            $comp_stmt = $conn->prepare("SELECT name FROM components WHERE id = ?");
+                            $comp_stmt->execute([$report['unit_id']]);
+                            $comp = $comp_stmt->fetch(PDO::FETCH_ASSOC);
+                            if ($comp) {
+                                $component_name = $comp['name'];
+                            }
+                        } catch (Exception $e) {
+                            // Ignore
+                        }
+                        
+                        // Format division name
+                        $div_name = $report['division_name'] ?? 'Unknown';
+                        if ($div_name == 'Shirt Assembly') $div_name = 'Assembly';
                     ?>
                     <tr>
                         <td><?php echo date('Y-m-d', strtotime($report['report_date'])); ?></td>
-                        <td><?php echo htmlspecialchars($report['division_name'] ?? 'Unknown'); ?></td>
-                        <td><?php echo 'Component #' . ($report['unit_id'] ?? 'N/A'); ?></td>
+                        <td><?php echo htmlspecialchars($div_name); ?></td>
+                        <td><?php echo htmlspecialchars($component_name); ?></td>
                         <td><?php echo number_format($report['day_total'] ?? 0, 0); ?></td>
                         <td class="<?php echo $eff_class; ?>"><?php echo number_format($eff, 1); ?>%</td>
                         <td style="text-align:center;">
@@ -484,8 +597,29 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         }
 
         function viewAllRecords() {
-            window.location.href = 'reports.php';
+            var today = new Date().toISOString().split('T')[0];
+            var from = '2020-01-01';
+            window.location.href = 'reports.php?from=' + from + '&to=' + today + '&division=all';
         }
+
+        function viewToday() {
+            var today = new Date().toISOString().split('T')[0];
+            window.location.href = 'reports.php?from=' + today + '&to=' + today + '&division=all';
+        }
+
+        // Set default date to today if empty
+        document.addEventListener('DOMContentLoaded', function() {
+            var today = new Date().toISOString().split('T')[0];
+            var fromInput = document.getElementById('rep-from');
+            var toInput = document.getElementById('rep-to');
+            
+            if (!fromInput.value) {
+                fromInput.value = today;
+            }
+            if (!toInput.value) {
+                toInput.value = today;
+            }
+        });
     </script>
 </body>
 </html>
