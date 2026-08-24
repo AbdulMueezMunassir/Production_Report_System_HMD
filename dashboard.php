@@ -276,8 +276,8 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         </a>
         <nav class="topnav">
             <a href="dashboard.php" class="active">Dashboard</a>
-            <a href="analytics.php">Analytics</a>
             <a href="reports.php">Reports</a>
+            <a href="analytics.php">Analytics</a>
             <?php if (isAdmin()): ?>
             <a href="users.php">Users</a>
             <?php endif; ?>
