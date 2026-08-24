@@ -1,5 +1,5 @@
 <?php
-// division_view.php - WITH ASSEMBLY ROWS UNDER SHIRT AND TROUSER (VIEW ONLY)
+// division_view.php - WITH DUPLICATE PREVENTION AND FIXED TROUSER
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/functions.php';
@@ -31,7 +31,7 @@ if ($is_assembly_division) {
     $division_name = 'Assembly';
 }
 
-// Get all components
+// Get all components - WITH DISTINCT to prevent duplicates
 $components = getComponents($conn, $division_id);
 $component_data = [];
 
@@ -479,9 +479,9 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                         <th style="min-width:60px;">DEVITION</th>
                         <th style="min-width:55px;">Unit</th>
                         <th style="min-width:65px;">TTl SAM/Pc</th>
-                        <th style="min-width:65px;">Unit SMV</th>
+                        <th style="min-width:65px;">Section SAM/Pc</th>
                         <th style="min-width:65px;">Day Forecast</th>
-                        <th style="min-width:65px;">Unit Carder</th>
+                        <th style="min-width:65px;">Assemble Carder</th>
                         <th style="min-width:65px;">Plan Hours</th>
                         <th style="min-width:65px;">Worked Hours</th>
                         <th style="min-width:70px;">Available Minutes</th>
@@ -507,8 +507,19 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                     $total_eff = 0;
                     $row_idx = 0;
                     
+                    // Track displayed component names to prevent duplicates
+                    $displayed_components = array();
+                    
                     foreach ($components as $comp):
                         if ($comp['is_match_out']) continue;
+                        
+                        // Skip if this component name was already displayed (prevent duplicates)
+                        $comp_name = $comp['name'];
+                        if (in_array($comp_name, $displayed_components)) {
+                            continue;
+                        }
+                        $displayed_components[] = $comp_name;
+                        
                         $row_idx++;
                         $data = $component_data[$comp['id']] ?? [];
                         
@@ -522,7 +533,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                     ?>
                     <tr data-component="<?php echo $comp['id']; ?>" data-isassembly="<?php echo $is_assembly_division ? '1' : '0'; ?>">
                         <td><?php echo htmlspecialchars($division_name); ?></td>
-                        <td><?php echo htmlspecialchars($comp['name']); ?></td>
+                        <td><?php echo htmlspecialchars($comp_name); ?></td>
                         <td class="editable-yellow"><input type="number" step="0.01" class="field-input" data-field="ttl_sam_pc" value="<?php echo $data['ttl_sam_pc'] ?? 0; ?>"></td>
                         <td class="editable-yellow"><input type="number" step="0.01" class="field-input" data-field="unit_smv" value="<?php echo $data['unit_smv'] ?? 0; ?>"></td>
                         <td class="calculated day-forecast" id="df-<?php echo $comp['id']; ?>"><?php echo number_format($data['day_forecast'] ?? 0, 0); ?></td>
@@ -541,7 +552,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                         <td class="calculated acvd-eff" id="ae-<?php echo $comp['id']; ?>" style="font-weight:700; color:<?php echo ($acvd_eff * 100) >= 70 ? '#28a745' : (($acvd_eff * 100) >= 50 ? '#f57c00' : '#dc3545'); ?>;"><?php echo number_format($acvd_eff * 100, 1); ?>%</td>
                     </tr>
                     <?php if ($is_assembly_division): ?>
-                    <!-- DHU Row for Assembly - Row 21, 23, 25, 27, 29, 31 -->
+                    <!-- DHU Row for Assembly -->
                     <tr class="assembly-dhu-row" data-dhu-for="<?php echo $comp['id']; ?>">
                         <td colspan="2" style="font-weight:700; color:var(--dhu-red);">DHU %</td>
                         <td colspan="<?php echo 10 + $work_hours; ?>" style="color:var(--dhu-red); font-weight:700; text-align:center;">
@@ -584,7 +595,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                         </td>
                     </tr>
                     
-                    <!-- DHU ROW - Row 9 (Shirt) and Row 15 (Trouser) -->
+                    <!-- DHU ROW -->
                     <tr class="dhu-row" id="dhuRow">
                         <td colspan="<?php echo 11 + $work_hours; ?>" style="text-align:right; padding-right:12px; font-weight:700; color:var(--dhu-red);">
                             DHU %
@@ -625,7 +636,6 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                     
                     <!-- ===================================================== -->
                     <!-- ASSEMBLY VIEW-ONLY ROWS UNDER SHIRT/TROUSER -->
-                    <!-- ONLY SHIRT row for Shirt division, ONLY TROUSER row for Trouser division -->
                     <!-- ===================================================== -->
                     
                     <?php if (!$is_assembly_division): ?>
@@ -741,7 +751,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                     
                     <?php endif; ?>
                     
-                    <!-- LEAN TOTAL - Row 32 (Assembly only - when viewing Assembly division) -->
+                    <!-- LEAN TOTAL - Row 32 (Assembly only) -->
                     <?php if ($is_assembly_division && !empty($lean_total)): ?>
                     <tr class="lean-total-row" id="leanTotalRow">
                         <td colspan="2" style="font-weight:700;">Lean Total</td>
@@ -763,7 +773,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                         <td style="font-weight:700; color:var(--primary);" id="lt-acvd-eff"><?php echo number_format(($lean_total['acvd_eff'] ?? 0) * 100, 1); ?>%</td>
                     </tr>
                     
-                    <!-- Lean Total DHU Row - Row 33 -->
+                    <!-- Lean Total DHU Row -->
                     <tr class="dhu-row">
                         <td colspan="<?php echo 11 + $work_hours; ?>" style="text-align:right; padding-right:12px; font-weight:700; color:var(--dhu-red);">
                             Lean Total DHU %
@@ -940,7 +950,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
 
         function autoSave(row, compId, isAssembly, hours, calcData) {
             if (!compId) return;
-            if (row.hasClass('view-only-row')) return; // Don't save view-only rows
+            if (row.hasClass('view-only-row')) return;
             
             var date = $('#reportDate').val();
             var division = <?php echo $division_id; ?>;
@@ -971,7 +981,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         }
 
         // ============================================================
-        // ASSEMBLY DHU% UPDATE - AA21/AA20, AA23/AA22, etc.
+        // ASSEMBLY DHU% UPDATE
         // ============================================================
         function updateAssemblyDHU(compId, dayTotal) {
             var dhuRow = $('tr[data-dhu-for="' + compId + '"]');
@@ -985,7 +995,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         }
 
         // ============================================================
-        // LEAN TOTAL CALCULATION - Row 32
+        // LEAN TOTAL CALCULATION
         // ============================================================
         function calculateLeanTotal(rows, hours) {
             if (!rows || rows.length === 0) {
@@ -1048,7 +1058,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         }
 
         // ============================================================
-        // FACTORY GRAND TOTAL/AVERAGE - Row 35
+        // FACTORY GRAND TOTAL/AVERAGE
         // ============================================================
         function calculateGrandTotal(rows, matchOut, hours) {
             if (!rows || rows.length === 0) {
