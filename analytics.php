@@ -1,5 +1,5 @@
 <?php
-// analytics.php - Analytics Dashboard with Vertical Marquee/Slider (4 Screens)
+// analytics.php - Analytics Dashboard with 4 Division Buttons
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/functions.php';
@@ -12,16 +12,24 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
 $today = date('Y-m-d');
 $work_hours = 11;
 
-// Get divisions
+// Get divisions - only the 4 main divisions
 $divisions = [];
 try {
-    $stmt = $conn->prepare("SELECT * FROM divisions WHERE id IN (1, 2, 3, 4, 5, 6, 7) ORDER BY FIELD(id, 1, 2, 3, 4, 5, 6, 7)");
+    $stmt = $conn->prepare("SELECT * FROM divisions WHERE id IN (1, 2, 3, 7) ORDER BY FIELD(id, 1, 2, 3, 7)");
     $stmt->execute();
     $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
     $divisions = $results;
 } catch (Exception $e) {
     $divisions = array();
 }
+
+// Define division names for display
+$division_names = [
+    1 => 'Shirt',
+    2 => 'Trouser', 
+    3 => 'Coat',
+    7 => 'Assembly'
+];
 
 // Function to get hourly data for a division
 function getDivisionChartData($conn, $division_id, $date, $work_hours) {
@@ -53,45 +61,83 @@ function getDivisionChartData($conn, $division_id, $date, $work_hours) {
     return $data;
 }
 
-// Get hourly data for each division
-$shirt_data = getDivisionChartData($conn, 1, $today, $work_hours);
-$shirt_mtm_data = getDivisionChartData($conn, 4, $today, $work_hours);
-$trouser_data = getDivisionChartData($conn, 2, $today, $work_hours);
-$trouser_mtm_data = getDivisionChartData($conn, 5, $today, $work_hours);
-$coat_data = getDivisionChartData($conn, 3, $today, $work_hours);
-$coat_mtm_data = getDivisionChartData($conn, 6, $today, $work_hours);
-$assembly_data = getDivisionChartData($conn, 7, $today, $work_hours);
+// Get division stats for the 4 main divisions
+$division_stats = [];
+$division_data = [];
 
-// If no data for today, try to get data from the most recent date
-$hasData = (array_sum($shirt_data) > 0 || array_sum($trouser_data) > 0 || array_sum($assembly_data) > 0);
-
-if (!$hasData) {
-    try {
-        $check = $conn->query("SELECT report_date FROM production_reports WHERE devition_id IN (1, 2, 3, 4, 5, 6, 7) ORDER BY report_date DESC LIMIT 1");
-        $last_date = $check->fetch(PDO::FETCH_ASSOC);
-        if ($last_date) {
-            $last_date = $last_date['report_date'];
-            $shirt_data = getDivisionChartData($conn, 1, $last_date, $work_hours);
-            $shirt_mtm_data = getDivisionChartData($conn, 4, $last_date, $work_hours);
-            $trouser_data = getDivisionChartData($conn, 2, $last_date, $work_hours);
-            $trouser_mtm_data = getDivisionChartData($conn, 5, $last_date, $work_hours);
-            $coat_data = getDivisionChartData($conn, 3, $last_date, $work_hours);
-            $coat_mtm_data = getDivisionChartData($conn, 6, $last_date, $work_hours);
-            $assembly_data = getDivisionChartData($conn, 7, $last_date, $work_hours);
+foreach ($divisions as $div) {
+    $div_id = $div['id'];
+    $div_name = $division_names[$div_id] ?? $div['name'];
+    
+    // Get main division data
+    $main_data = getDivisionChartData($conn, $div_id, $today, $work_hours);
+    
+    // Get MTM data (if applicable)
+    $mtm_id = 0;
+    $mtm_data = array_fill(0, 10, 0);
+    
+    if ($div_id == 1) { // Shirt MTM = division_id 4
+        $mtm_id = 4;
+        $mtm_data = getDivisionChartData($conn, 4, $today, $work_hours);
+    } elseif ($div_id == 2) { // Trouser MTM = division_id 5
+        $mtm_id = 5;
+        $mtm_data = getDivisionChartData($conn, 5, $today, $work_hours);
+    } elseif ($div_id == 3) { // Coat MTM = division_id 6
+        $mtm_id = 6;
+        $mtm_data = getDivisionChartData($conn, 6, $today, $work_hours);
+    }
+    
+    // If no data for today, try to get data from the most recent date
+    if (array_sum($main_data) == 0) {
+        try {
+            $check = $conn->query("SELECT report_date FROM production_reports WHERE devition_id = $div_id ORDER BY report_date DESC LIMIT 1");
+            $last_date = $check->fetch(PDO::FETCH_ASSOC);
+            if ($last_date) {
+                $last_date = $last_date['report_date'];
+                $main_data = getDivisionChartData($conn, $div_id, $last_date, $work_hours);
+                if ($mtm_id > 0) {
+                    $mtm_data = getDivisionChartData($conn, $mtm_id, $last_date, $work_hours);
+                }
+            }
+        } catch (Exception $e) {}
+    }
+    
+    // If still no data, use sample data
+    if (array_sum($main_data) == 0) {
+        $sample_data = [
+            1 => [85, 120, 95, 110, 78, 90, 105, 88, 92, 78],
+            2 => [70, 95, 80, 90, 65, 75, 85, 72, 78, 65],
+            3 => [50, 70, 55, 65, 45, 55, 60, 52, 58, 45],
+            7 => [120, 180, 150, 200, 140, 160, 190, 170, 175, 140]
+        ];
+        $sample_mtm = [
+            1 => [45, 60, 55, 70, 48, 52, 65, 58, 62, 48],
+            2 => [35, 50, 40, 55, 38, 42, 55, 48, 52, 38],
+            3 => [25, 40, 30, 45, 28, 32, 45, 38, 42, 28],
+            7 => []
+        ];
+        $main_data = $sample_data[$div_id] ?? array_fill(0, 10, 0);
+        if ($mtm_id > 0 && isset($sample_mtm[$div_id])) {
+            $mtm_data = $sample_mtm[$div_id];
         }
-    } catch (Exception $e) {}
+    }
+    
+    $division_stats[$div_id] = [
+        'name' => $div_name,
+        'data' => $main_data,
+        'mtm_data' => $mtm_data,
+        'has_mtm' => $mtm_id > 0,
+        'mtm_name' => $mtm_id > 0 ? ($div_name . ' MTM') : ''
+    ];
 }
 
-// If still no data, use sample data
-if (array_sum($shirt_data) == 0) {
-    $shirt_data = [85, 120, 95, 110, 78, 90, 105, 88, 92, 78];
-    $shirt_mtm_data = [45, 60, 55, 70, 48, 52, 65, 58, 62, 48];
-    $trouser_data = [70, 95, 80, 90, 65, 75, 85, 72, 78, 65];
-    $trouser_mtm_data = [35, 50, 40, 55, 38, 42, 55, 48, 52, 38];
-    $coat_data = [50, 70, 55, 65, 45, 55, 60, 52, 58, 45];
-    $coat_mtm_data = [25, 40, 30, 45, 28, 32, 45, 38, 42, 28];
-    $assembly_data = [120, 180, 150, 200, 140, 160, 190, 170, 175, 140];
+// Determine which division is selected (default: Shirt)
+$selected_division = isset($_GET['division']) ? (int)$_GET['division'] : 1;
+if (!isset($division_stats[$selected_division])) {
+    $selected_division = 1;
 }
+
+$selected_data = $division_stats[$selected_division] ?? null;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -128,7 +174,6 @@ if (array_sum($shirt_data) == 0) {
             min-height: 100vh;
             color: var(--text);
             position: relative;
-            overflow: hidden;
         }
         .bg-shapes {
             position: fixed;
@@ -228,8 +273,6 @@ if (array_sum($shirt_data) == 0) {
             max-width: 1400px;
             margin: 0 auto;
             padding: 20px 30px;
-            height: calc(100vh - 80px);
-            overflow: hidden;
         }
         
         .page-header {
@@ -239,7 +282,6 @@ if (array_sum($shirt_data) == 0) {
             margin-bottom: 20px;
             flex-wrap: wrap;
             gap: 12px;
-            flex-shrink: 0;
         }
         .page-header .title h2 { font-size: 24px; font-weight: 800; color: var(--text-dark); }
         .page-header .title p { color: var(--steel); font-size: 14px; font-weight: 500; margin-top: 4px; }
@@ -263,188 +305,102 @@ if (array_sum($shirt_data) == 0) {
         .btn-secondary { background: rgba(255,255,255,0.5); color: var(--text-dark); border: 1px solid var(--glass-border); }
         .btn-secondary:hover { background: rgba(255,255,255,0.8); }
 
-        /* Vertical Slider Container */
-        .slider-container {
-            position: relative;
-            width: 100%;
-            height: calc(100vh - 200px);
-            overflow: hidden;
-            border-radius: var(--border-radius);
+        /* Division Selector Buttons */
+        .division-selector {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 24px;
+            padding: 16px 20px;
             background: var(--glass-bg);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
             border: 1px solid var(--glass-border);
+            border-radius: var(--border-radius);
             box-shadow: var(--shadow);
         }
-        
-        .slides-wrapper {
-            display: flex;
-            flex-direction: column;
-            width: 100%;
-            height: 400%;
-            transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
-            transform: translateY(0);
-        }
-        
-        .slide {
-            width: 100%;
-            height: 25%;
-            padding: 30px;
-            overflow-y: auto;
-            flex-shrink: 0;
-        }
-        
-        .slide h3 {
-            font-size: 18px;
-            font-weight: 700;
+        .division-btn {
+            padding: 10px 28px;
+            border: 2px solid var(--glass-border);
+            border-radius: 10px;
+            background: rgba(255,255,255,0.3);
             color: var(--text-dark);
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid var(--primary);
+            font-weight: 700;
+            font-size: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
-        
-        .slide .chart-grid {
+        .division-btn:hover {
+            background: rgba(255,255,255,0.6);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+        }
+        .division-btn.active {
+            background: var(--primary);
+            color: #fff;
+            border-color: var(--primary);
+            box-shadow: 0 4px 15px rgba(33,115,70,0.3);
+        }
+        .division-btn .icon { font-size: 20px; }
+        .division-btn .badge {
+            font-size: 10px;
+            background: rgba(255,255,255,0.2);
+            padding: 1px 8px;
+            border-radius: 10px;
+            margin-left: 4px;
+        }
+        .division-btn.active .badge {
+            background: rgba(255,255,255,0.25);
+        }
+
+        /* Chart Container */
+        .chart-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 20px;
-            height: calc(100% - 60px);
         }
-        
-        .slide .chart-card {
-            background: rgba(255,255,255,0.4);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
+        .chart-card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
             border: 1px solid var(--glass-border);
             border-radius: var(--border-radius);
-            padding: 20px;
+            padding: 24px;
             box-shadow: var(--shadow);
-            display: flex;
-            flex-direction: column;
+            transition: all 0.3s ease;
         }
-        
-        .slide .chart-card h4 {
-            font-size: 14px;
-            font-weight: 600;
+        .chart-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 40px rgba(0,0,0,0.1);
+        }
+        .chart-card h3 {
+            font-size: 16px;
+            font-weight: 700;
             color: var(--text-dark);
-            margin-bottom: 10px;
+            margin-bottom: 16px;
             text-align: center;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--primary);
         }
-        
-        .slide .chart-card .chart-container {
-            flex: 1;
+        .chart-card .chart-wrapper {
             position: relative;
-            min-height: 180px;
+            height: 280px;
         }
-        
-        .slide .chart-card canvas {
+        .chart-card .chart-wrapper canvas {
             width: 100% !important;
             height: 100% !important;
         }
 
-        /* Assembly slide - full width chart */
-        .slide-assembly .chart-grid {
-            grid-template-columns: 1fr;
-        }
-        .slide-assembly .chart-card {
+        /* Full width chart for Assembly */
+        .chart-full {
             grid-column: 1 / -1;
         }
-        .slide-assembly .chart-container {
-            min-height: 250px;
-        }
-
-        /* Navigation Controls - Vertical */
-        .slider-nav {
-            position: absolute;
-            right: 20px;
-            top: 50%;
-            transform: translateY(-50%);
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            z-index: 20;
-            background: rgba(255,255,255,0.2);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            padding: 12px 10px;
-            border-radius: 30px;
-            border: 1px solid var(--glass-border);
-        }
-        
-        .slider-nav .dot {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            background: rgba(255,255,255,0.4);
-            cursor: pointer;
-            transition: all 0.3s;
-            border: none;
-        }
-        
-        .slider-nav .dot.active {
-            background: var(--primary);
-            transform: scale(1.3);
-        }
-        
-        .slider-nav .dot:hover {
-            background: var(--primary-dark);
-            transform: scale(1.1);
-        }
-        
-        .slider-arrows {
-            position: absolute;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 100%;
-            display: flex;
-            justify-content: space-between;
-            padding: 0 10px;
-            z-index: 15;
-            pointer-events: none;
-            top: 50%;
-            transform: translate(-50%, -50%);
-        }
-        
-        .slider-arrows button {
-            pointer-events: auto;
-            background: rgba(255,255,255,0.3);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border: 1px solid var(--glass-border);
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            font-size: 18px;
-            cursor: pointer;
-            transition: all 0.3s;
-            color: var(--text-dark);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        .slider-arrows button:hover {
-            background: rgba(255,255,255,0.6);
-            transform: scale(1.05);
-        }
-        
-        .slider-arrows button:active {
-            transform: scale(0.95);
-        }
-        
-        .slide-indicator {
-            position: absolute;
-            top: 20px;
-            right: 30px;
-            background: rgba(255,255,255,0.2);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            padding: 6px 14px;
-            border-radius: 20px;
-            font-size: 13px;
-            font-weight: 600;
-            color: var(--text-dark);
-            border: 1px solid var(--glass-border);
-            z-index: 20;
+        .chart-full .chart-wrapper {
+            height: 320px;
         }
 
         .back-button {
@@ -462,7 +418,6 @@ if (array_sum($shirt_data) == 0) {
             font-weight: 600;
             font-size: 14px;
             transition: all 0.3s ease;
-            flex-shrink: 0;
         }
         .back-button:hover {
             background: rgba(255,255,255,0.3);
@@ -470,59 +425,38 @@ if (array_sum($shirt_data) == 0) {
             box-shadow: 0 4px 15px rgba(0,0,0,0.08);
         }
 
-        .slide::-webkit-scrollbar {
-            width: 4px;
-        }
-        .slide::-webkit-scrollbar-track {
-            background: rgba(255,255,255,0.1);
-            border-radius: 4px;
-        }
-        .slide::-webkit-scrollbar-thumb {
-            background: var(--primary);
-            border-radius: 4px;
+        .no-data {
+            text-align: center;
+            padding: 40px;
+            color: var(--steel);
+            font-size: 16px;
+            font-weight: 500;
         }
 
         @media (max-width: 1024px) {
-            .slide .chart-grid {
+            .chart-grid {
                 grid-template-columns: 1fr;
-                height: auto;
             }
-            .slide {
-                padding: 20px;
-                overflow-y: auto;
-            }
-            .slider-container {
-                height: calc(100vh - 250px);
-            }
-            .slide-assembly .chart-container {
-                min-height: 200px;
-            }
-            .slider-arrows button {
-                width: 32px;
-                height: 32px;
-                font-size: 14px;
+            .chart-full {
+                grid-column: 1;
             }
         }
         @media (max-width: 768px) {
             .topbar { padding: 10px 16px; flex-direction: column; align-items: stretch; gap: 8px; }
             .topnav { justify-content: center; }
             .right { justify-content: center; }
-            .analytics-container { padding: 12px 16px; height: calc(100vh - 120px); }
+            .analytics-container { padding: 12px 16px; }
             .page-header { flex-direction: column; align-items: flex-start; }
             .page-header .controls { width: 100%; flex-wrap: wrap; }
-            .slide { padding: 12px; }
-            .slide .chart-card { padding: 12px; }
-            .slider-arrows { display: none; }
-            .slider-nav { right: 10px; padding: 8px 6px; gap: 8px; }
-            .slider-nav .dot { width: 10px; height: 10px; }
-            .slide-indicator { font-size: 11px; padding: 4px 10px; top: 12px; right: 16px; }
+            .division-selector { flex-direction: row; flex-wrap: wrap; justify-content: center; }
+            .division-btn { padding: 8px 16px; font-size: 13px; flex: 1; min-width: 80px; justify-content: center; }
+            .chart-card { padding: 16px; }
+            .chart-card .chart-wrapper { height: 220px; }
             .topnav a { padding: 6px 12px; font-size: 13px; }
         }
         @media (max-width: 480px) {
-            .slide-assembly .chart-container { min-height: 180px; }
-            .slide .chart-card .chart-container { min-height: 140px; }
-            .slider-nav { right: 6px; padding: 6px 4px; gap: 6px; }
-            .slider-nav .dot { width: 8px; height: 8px; }
+            .division-btn { font-size: 12px; padding: 6px 12px; min-width: 60px; }
+            .chart-card .chart-wrapper { height: 180px; }
         }
     </style>
 </head>
@@ -561,185 +495,70 @@ if (array_sum($shirt_data) == 0) {
         <div class="page-header">
             <div class="title">
                 <h2>📊 Analytics Dashboard</h2>
-                <p>Visual insights into production performance by division</p>
+                <p>Select a division to view hourly production charts</p>
             </div>
             <div class="controls">
                 <a href="dashboard.php" class="btn btn-secondary">← Back</a>
             </div>
         </div>
 
-        <div class="slider-container" id="sliderContainer">
-            <div class="slide-indicator" id="slideIndicator">1 / 4</div>
-            
-            <div class="slider-arrows">
-                <button id="prevSlide" onclick="changeSlide(-1)">▲</button>
-                <button id="nextSlide" onclick="changeSlide(1)">▼</button>
-            </div>
-
-            <div class="slides-wrapper" id="slidesWrapper">
-                <!-- ====== SLIDE 1: Shirt & Shirt MTM ====== -->
-                <div class="slide">
-                    <h3>👔 Shirt &amp; Shirt MTM - Hourly Production</h3>
-                    <div class="chart-grid">
-                        <div class="chart-card">
-                            <h4>Shirt Devition</h4>
-                            <div class="chart-container">
-                                <canvas id="chartShirt"></canvas>
-                            </div>
-                        </div>
-                        <div class="chart-card">
-                            <h4>Shirt MTM</h4>
-                            <div class="chart-container">
-                                <canvas id="chartShirtMTM"></canvas>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- ====== SLIDE 2: Trouser & Trouser MTM ====== -->
-                <div class="slide">
-                    <h3>👖 Trouser &amp; Trouser MTM - Hourly Production</h3>
-                    <div class="chart-grid">
-                        <div class="chart-card">
-                            <h4>Trouser Devition</h4>
-                            <div class="chart-container">
-                                <canvas id="chartTrouser"></canvas>
-                            </div>
-                        </div>
-                        <div class="chart-card">
-                            <h4>Trouser MTM</h4>
-                            <div class="chart-container">
-                                <canvas id="chartTrouserMTM"></canvas>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- ====== SLIDE 3: Coat & Coat MTM ====== -->
-                <div class="slide">
-                    <h3>🧥 Coat &amp; Coat MTM - Hourly Production</h3>
-                    <div class="chart-grid">
-                        <div class="chart-card">
-                            <h4>Coat Devition</h4>
-                            <div class="chart-container">
-                                <canvas id="chartCoat"></canvas>
-                            </div>
-                        </div>
-                        <div class="chart-card">
-                            <h4>Coat MTM</h4>
-                            <div class="chart-container">
-                                <canvas id="chartCoatMTM"></canvas>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- ====== SLIDE 4: Assembly ====== -->
-                <div class="slide slide-assembly">
-                    <h3>🏭 Assembly - Hourly Production</h3>
-                    <div class="chart-grid">
-                        <div class="chart-card">
-                            <h4>Assembly Unit</h4>
-                            <div class="chart-container">
-                                <canvas id="chartAssembly"></canvas>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="slider-nav" id="sliderNav">
-                <button class="dot active" data-index="0" onclick="goToSlide(0)"></button>
-                <button class="dot" data-index="1" onclick="goToSlide(1)"></button>
-                <button class="dot" data-index="2" onclick="goToSlide(2)"></button>
-                <button class="dot" data-index="3" onclick="goToSlide(3)"></button>
-            </div>
+        <!-- Division Selector Buttons -->
+        <div class="division-selector">
+            <?php 
+            $icons = [
+                1 => '👔',
+                2 => '👖',
+                3 => '🧥',
+                7 => '🏭'
+            ];
+            foreach ($division_stats as $div_id => $stats):
+                $icon = $icons[$div_id] ?? '📊';
+                $is_active = ($selected_division == $div_id);
+            ?>
+            <button class="division-btn <?php echo $is_active ? 'active' : ''; ?>" 
+                    onclick="selectDivision(<?php echo $div_id; ?>)">
+                <span class="icon"><?php echo $icon; ?></span>
+                <?php echo $stats['name']; ?>
+                <?php if ($stats['has_mtm']): ?>
+                <span class="badge">+MTM</span>
+                <?php endif; ?>
+            </button>
+            <?php endforeach; ?>
         </div>
+
+        <!-- Charts Area -->
+        <?php if ($selected_data): ?>
+        <div class="chart-grid" id="chartGrid">
+            <?php if ($selected_data['has_mtm']): ?>
+                <!-- Show both Main and MTM charts -->
+                <div class="chart-card">
+                    <h3><?php echo $selected_data['name']; ?> - Hourly Production</h3>
+                    <div class="chart-wrapper">
+                        <canvas id="chartMain"></canvas>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <h3><?php echo $selected_data['mtm_name']; ?> - Hourly Production</h3>
+                    <div class="chart-wrapper">
+                        <canvas id="chartMTM"></canvas>
+                    </div>
+                </div>
+            <?php else: ?>
+                <!-- Show single full-width chart for Assembly -->
+                <div class="chart-card chart-full">
+                    <h3><?php echo $selected_data['name']; ?> - Hourly Production</h3>
+                    <div class="chart-wrapper">
+                        <canvas id="chartMain"></canvas>
+                    </div>
+                </div>
+            <?php endif; ?>
+        </div>
+        <?php else: ?>
+        <div class="no-data">No data available for the selected division.</div>
+        <?php endif; ?>
     </div>
 
     <script>
-        // ============================================================
-        // SLIDER FUNCTIONS - Vertical (Up/Down)
-        // ============================================================
-        let currentSlide = 0;
-        const totalSlides = 4;
-
-        function updateSlide() {
-            const wrapper = document.getElementById('slidesWrapper');
-            // Move up: translateY(-25% * currentSlide)
-            wrapper.style.transform = `translateY(-${currentSlide * 25}%)`;
-            
-            document.getElementById('slideIndicator').textContent = `${currentSlide + 1} / ${totalSlides}`;
-            
-            document.querySelectorAll('.dot').forEach((dot, index) => {
-                dot.classList.toggle('active', index === currentSlide);
-            });
-        }
-
-        function changeSlide(direction) {
-            currentSlide = (currentSlide + direction + totalSlides) % totalSlides;
-            updateSlide();
-            resetAutoSlide();
-        }
-
-        function goToSlide(index) {
-            currentSlide = index;
-            updateSlide();
-            resetAutoSlide();
-        }
-
-        // Keyboard navigation (Up/Down arrows)
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'ArrowDown') changeSlide(1);
-            if (e.key === 'ArrowUp') changeSlide(-1);
-        });
-
-        // Touch support for mobile (vertical swipe)
-        let touchStartY = 0;
-        let touchEndY = 0;
-
-        document.getElementById('sliderContainer').addEventListener('touchstart', function(e) {
-            touchStartY = e.changedTouches[0].screenY;
-        }, {passive: true});
-
-        document.getElementById('sliderContainer').addEventListener('touchend', function(e) {
-            touchEndY = e.changedTouches[0].screenY;
-            const diff = touchStartY - touchEndY;
-            if (Math.abs(diff) > 50) {
-                if (diff > 0) changeSlide(1); // Swipe up = next slide
-                else changeSlide(-1); // Swipe down = previous slide
-            }
-        }, {passive: true});
-
-        // Mouse wheel support
-        let wheelTimeout = false;
-        document.getElementById('sliderContainer').addEventListener('wheel', function(e) {
-            e.preventDefault();
-            if (wheelTimeout) return;
-            wheelTimeout = true;
-            setTimeout(() => { wheelTimeout = false; }, 800);
-            
-            if (e.deltaY > 0) {
-                changeSlide(1);
-            } else {
-                changeSlide(-1);
-            }
-        }, {passive: false});
-
-        // ============================================================
-        // AUTO-SLIDE (Up/Down)
-        // ============================================================
-        let autoSlideInterval;
-
-        function startAutoSlide() {
-            autoSlideInterval = setInterval(() => changeSlide(1), 8000);
-        }
-
-        function resetAutoSlide() {
-            clearInterval(autoSlideInterval);
-            startAutoSlide();
-        }
-
         // ============================================================
         // CLOCK FUNCTION
         // ============================================================
@@ -755,137 +574,179 @@ if (array_sum($shirt_data) == 0) {
         setInterval(updateClock, 60000);
 
         // ============================================================
+        // DIVISION SELECTOR
+        // ============================================================
+        function selectDivision(divisionId) {
+            window.location.href = 'analytics.php?division=' + divisionId;
+        }
+
+        // ============================================================
         // CHART DATA
         // ============================================================
-        const chartLabels = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'];
+        const chartLabels = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th', '9th', '10th'];
         
-        const shirtData = <?php echo json_encode($shirt_data); ?>;
-        const shirtMTMData = <?php echo json_encode($shirt_mtm_data); ?>;
-        const trouserData = <?php echo json_encode($trouser_data); ?>;
-        const trouserMTMData = <?php echo json_encode($trouser_mtm_data); ?>;
-        const coatData = <?php echo json_encode($coat_data); ?>;
-        const coatMTMData = <?php echo json_encode($coat_mtm_data); ?>;
-        const assemblyData = <?php echo json_encode($assembly_data); ?>;
+        // Chart Colors
+        const colors = {
+            main: {
+                backgroundColor: 'rgba(33, 115, 70, 0.7)',
+                borderColor: 'rgba(33, 115, 70, 1)',
+                hoverBackgroundColor: 'rgba(33, 115, 70, 0.9)'
+            },
+            mtm: {
+                backgroundColor: 'rgba(245, 124, 0, 0.7)',
+                borderColor: 'rgba(245, 124, 0, 1)',
+                hoverBackgroundColor: 'rgba(245, 124, 0, 0.9)'
+            },
+            assembly: {
+                backgroundColor: 'rgba(79, 172, 254, 0.2)',
+                borderColor: 'rgba(79, 172, 254, 1)',
+                pointBackgroundColor: 'rgba(79, 172, 254, 1)'
+            }
+        };
+
+        <?php if ($selected_data): ?>
+        // Main division data
+        const mainData = <?php echo json_encode($selected_data['data']); ?>;
+        const hasMTM = <?php echo $selected_data['has_mtm'] ? 'true' : 'false'; ?>;
+        const mtmData = <?php echo json_encode($selected_data['mtm_data']); ?>;
+        const isAssembly = <?php echo ($selected_division == 7) ? 'true' : 'false'; ?>;
+        const divisionName = '<?php echo $selected_data['name']; ?>';
+        const mtmName = '<?php echo $selected_data['mtm_name']; ?>';
 
         Chart.defaults.font.family = "'Inter', sans-serif";
         Chart.defaults.font.size = 11;
         Chart.defaults.color = '#6b7a8f';
 
-        function createBarChart(id, data, label, color) {
-            const ctx = document.getElementById(id);
+        function createMainChart() {
+            const ctx = document.getElementById('chartMain');
             if (!ctx) return null;
-            
+
+            if (isAssembly) {
+                // Assembly - Line Chart
+                return new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: chartLabels,
+                        datasets: [{
+                            label: 'Production (Pcs)',
+                            data: mainData,
+                            borderColor: colors.assembly.borderColor,
+                            backgroundColor: colors.assembly.backgroundColor,
+                            tension: 0.3,
+                            fill: true,
+                            pointBackgroundColor: colors.assembly.pointBackgroundColor,
+                            pointRadius: 5,
+                            pointHoverRadius: 7
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { 
+                                display: true, 
+                                position: 'top',
+                                labels: { usePointStyle: true, padding: 10 }
+                            }
+                        },
+                        scales: {
+                            y: { 
+                                beginAtZero: true,
+                                ticks: { callback: function(value) { return value; } }
+                            }
+                        }
+                    }
+                });
+            } else {
+                // Bar Chart for Shirt, Trouser, Coat
+                return new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: chartLabels,
+                        datasets: [{
+                            label: 'Production (Pcs)',
+                            data: mainData,
+                            backgroundColor: colors.main.backgroundColor,
+                            borderColor: colors.main.borderColor,
+                            borderWidth: 2,
+                            borderRadius: 4,
+                            hoverBackgroundColor: colors.main.hoverBackgroundColor
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { 
+                                display: true, 
+                                position: 'top',
+                                labels: { usePointStyle: true, padding: 10 }
+                            }
+                        },
+                        scales: {
+                            y: { 
+                                beginAtZero: true,
+                                ticks: { callback: function(value) { return value; } }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        function createMTMChart() {
+            const ctx = document.getElementById('chartMTM');
+            if (!ctx || !hasMTM) return null;
+
             return new Chart(ctx, {
                 type: 'bar',
                 data: {
                     labels: chartLabels,
                     datasets: [{
-                        label: label,
-                        data: data,
-                        backgroundColor: color,
-                        borderColor: color,
+                        label: 'Production (Pcs)',
+                        data: mtmData,
+                        backgroundColor: colors.mtm.backgroundColor,
+                        borderColor: colors.mtm.borderColor,
                         borderWidth: 2,
-                        borderRadius: 4
+                        borderRadius: 4,
+                        hoverBackgroundColor: colors.mtm.hoverBackgroundColor
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: {
-                        legend: { display: false }
+                        legend: { 
+                            display: true, 
+                            position: 'top',
+                            labels: { usePointStyle: true, padding: 10 }
+                        }
                     },
                     scales: {
                         y: { 
                             beginAtZero: true,
-                            ticks: {
-                                callback: function(value) { return value; }
-                            }
+                            ticks: { callback: function(value) { return value; } }
                         }
                     }
                 }
             });
         }
 
-        // Chart Colors
-        const colors = {
-            shirt: 'rgba(33, 115, 70, 0.8)',
-            shirtMTM: 'rgba(46, 148, 104, 0.8)',
-            trouser: 'rgba(227, 167, 48, 0.8)',
-            trouserMTM: 'rgba(245, 124, 0, 0.8)',
-            coat: 'rgba(118, 75, 162, 0.8)',
-            coatMTM: 'rgba(156, 39, 176, 0.8)',
-            assembly: 'rgba(79, 172, 254, 0.8)'
-        };
+        // Create charts
+        let mainChart = createMainChart();
+        let mtmChart = createMTMChart();
 
-        // Create all bar charts
-        createBarChart('chartShirt', shirtData, 'Pcs', colors.shirt);
-        createBarChart('chartShirtMTM', shirtMTMData, 'Pcs', colors.shirtMTM);
-        createBarChart('chartTrouser', trouserData, 'Pcs', colors.trouser);
-        createBarChart('chartTrouserMTM', trouserMTMData, 'Pcs', colors.trouserMTM);
-        createBarChart('chartCoat', coatData, 'Pcs', colors.coat);
-        createBarChart('chartCoatMTM', coatMTMData, 'Pcs', colors.coatMTM);
-        
-        // Assembly chart - line chart
-        new Chart(document.getElementById('chartAssembly'), {
-            type: 'line',
-            data: {
-                labels: chartLabels,
-                datasets: [{
-                    label: 'Pcs',
-                    data: assemblyData,
-                    borderColor: colors.assembly,
-                    backgroundColor: 'rgba(79, 172, 254, 0.15)',
-                    tension: 0.3,
-                    fill: true,
-                    pointBackgroundColor: colors.assembly,
-                    pointRadius: 5,
-                    pointHoverRadius: 7
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { 
-                        display: true, 
-                        position: 'top',
-                        labels: { usePointStyle: true, padding: 10 }
-                    }
-                },
-                scales: {
-                    y: { 
-                        beginAtZero: true,
-                        ticks: { callback: function(value) { return value; } }
-                    }
-                }
-            }
-        });
-
-        // ============================================================
-        // HANDLE WINDOW RESIZE
-        // ============================================================
+        // Handle window resize
         let resizeTimeout;
         window.addEventListener('resize', function() {
             clearTimeout(resizeTimeout);
             resizeTimeout = setTimeout(() => {
-                Chart.instances.forEach(chart => chart.resize());
+                if (mainChart) mainChart.resize();
+                if (mtmChart) mtmChart.resize();
             }, 250);
         });
 
-        // ============================================================
-        // START AUTO-SLIDE
-        // ============================================================
-        startAutoSlide();
-
-        // Reset timer on manual navigation
-        document.querySelectorAll('.dot, #prevSlide, #nextSlide').forEach(el => {
-            el.addEventListener('click', function() {
-                resetAutoSlide();
-            });
-        });
-
-        // Initial slide position
-        updateSlide();
+        <?php endif; ?>
     </script>
 </body>
 </html>
