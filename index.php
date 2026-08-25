@@ -278,9 +278,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </button>
             </form>
 
-            <div class="login-footer">
-                <p class="default-creds">Default: <strong>admin</strong> / <strong>admin123</strong></p>
-            </div>
+            
 
             <div class="status-bar">
                 <span><span class="dot"></span> System Online</span>

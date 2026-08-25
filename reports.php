@@ -550,14 +550,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         </div>
     </div>
 
-    <div class="weather-bar">
-        <span class="weather-icon">⛅</span>
-        <span class="temp">29°C</span>
-        <span>Partly sunny</span>
-        <span>|</span>
-        <span><?php echo date('g:i A'); ?></span>
-        <span><?php echo date('M d, Y'); ?></span>
-    </div>
+    
 
     <script>
         function updateClock() {
