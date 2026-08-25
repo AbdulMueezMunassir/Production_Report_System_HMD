@@ -1,5 +1,5 @@
 <?php
-// save_data.php - COMPLETE FIXED VERSION WITH DIRECT INSERT
+// save_data.php - COMPLETE FIXED VERSION WITH CORRECT FORMULAS
 session_start();
 require_once 'config/database.php';
 require_once 'includes/auth.php';
@@ -27,11 +27,9 @@ $is_assembly = isset($_POST['is_assembly']) && $_POST['is_assembly'] == '1';
 $response = ['success' => false, 'message' => ''];
 
 try {
-    // If auto_save, get data from JSON
     if ($action === 'auto_save' && isset($_POST['data'])) {
         $post_data = json_decode($_POST['data'], true);
         if ($post_data) {
-            // Build save data
             $save_data = [
                 'report_date' => $date,
                 'devition_id' => $division_id,
@@ -43,22 +41,25 @@ try {
                 'worked_hours' => (float)($post_data['worked_hours'] ?? $work_hours)
             ];
             
-            // Ensure ALL 11 hours are saved
             for ($h = 1; $h <= 11; $h++) {
                 $save_data["hour_$h"] = (float)($post_data["hour_$h"] ?? 0);
             }
             
-            // Recalculate using Excel formulas
             if ($is_assembly) {
-                // Assembly (80% target)
+                // ASSEMBLY FORMULAS (80% target)
+                // Day Forecast = (Assemble Carder * 600 / Section SAM/Pc) * 80%
                 if ($save_data['unit_smv'] > 0 && $save_data['unit_carder'] > 0) {
                     $save_data['day_forecast'] = ($save_data['unit_carder'] * 600 / $save_data['unit_smv']) * 0.80;
                 } else {
                     $save_data['day_forecast'] = 0;
                 }
+                // Available Minutes = (Assemble Carder * Plan Hours) * 60
                 $save_data['available_minutes'] = $save_data['unit_carder'] * $save_data['plan_hours'] * 60;
+                // Plan Minutes = Day Forecast * Section SAM/Pc
                 $save_data['plan_minutes'] = $save_data['day_forecast'] * $save_data['unit_smv'];
+                // Plan Eff = Plan Minutes / Available Minutes
                 $save_data['plan_eff'] = ($save_data['available_minutes'] > 0) ? ($save_data['plan_minutes'] / $save_data['available_minutes']) : 0;
+                // 100% Target = (Assemble Carder / Section SAM/Pc) * 60
                 $save_data['target_100'] = ($save_data['unit_smv'] > 0) ? ($save_data['unit_carder'] / $save_data['unit_smv']) * 60 : 0;
                 
                 $day_total = 0;
@@ -66,23 +67,30 @@ try {
                     $day_total += $save_data["hour_$h"];
                 }
                 $save_data['day_total'] = $day_total;
+                // Assembly: Earned Minutes = Day Total * TTL SAM/Pc
                 $save_data['ern_minutes'] = $day_total * $save_data['ttl_sam_pc'];
                 
-                if ($save_data['available_minutes'] > 0 && $save_data['worked_hours'] > 0) {
+                // Assembly: Achieved Efficiency = Earned Minutes / Available Minutes * (Plan Hours / Worked Hours)
+                if ($save_data['available_minutes'] > 0 && $save_data['worked_hours'] > 0 && $save_data['plan_hours'] > 0) {
                     $save_data['acvd_eff'] = ($save_data['ern_minutes'] / $save_data['available_minutes']) * ($save_data['plan_hours'] / $save_data['worked_hours']);
                 } else {
                     $save_data['acvd_eff'] = 0;
                 }
             } else {
-                // Shirt/Trouser (90% target)
+                // SHIRT/TROUSER FORMULAS (90% target)
+                // Day Forecast = (Unit Carder * 600 / Unit SMV) * 90%
                 if ($save_data['unit_smv'] > 0 && $save_data['unit_carder'] > 0) {
                     $save_data['day_forecast'] = ($save_data['unit_carder'] * 600 / $save_data['unit_smv']) * 0.90;
                 } else {
                     $save_data['day_forecast'] = 0;
                 }
+                // Available Minutes = (Unit Carder * Plan Hours) * 60
                 $save_data['available_minutes'] = $save_data['unit_carder'] * $save_data['plan_hours'] * 60;
+                // Plan Minutes = Day Forecast * Unit SMV
                 $save_data['plan_minutes'] = $save_data['day_forecast'] * $save_data['unit_smv'];
+                // Plan Eff = Plan Minutes / Available Minutes
                 $save_data['plan_eff'] = ($save_data['available_minutes'] > 0) ? ($save_data['plan_minutes'] / $save_data['available_minutes']) : 0;
+                // 100% Target = (Unit Carder / Unit SMV) * 60
                 $save_data['target_100'] = ($save_data['unit_smv'] > 0) ? ($save_data['unit_carder'] / $save_data['unit_smv']) * 60 : 0;
                 
                 $day_total = 0;
@@ -90,8 +98,10 @@ try {
                     $day_total += $save_data["hour_$h"];
                 }
                 $save_data['day_total'] = $day_total;
+                // Shirt/Trouser: Earned Minutes = Day Total * Unit SMV
                 $save_data['ern_minutes'] = $day_total * $save_data['unit_smv'];
                 
+                // Shirt/Trouser: Achieved Efficiency = Earned Minutes / ((Available Minutes / Plan Hours) * Worked Hours)
                 $denominator = 1;
                 if ($save_data['available_minutes'] > 0 && $save_data['plan_hours'] > 0) {
                     $denominator = ($save_data['available_minutes'] / $save_data['plan_hours']) * $save_data['worked_hours'];
@@ -99,15 +109,12 @@ try {
                 $save_data['acvd_eff'] = ($denominator > 0) ? ($save_data['ern_minutes'] / $denominator) : 0;
             }
             
-            // DIRECT INSERT/UPDATE - Bypass the function for now
             try {
-                // Check if record exists
                 $check = $conn->prepare("SELECT id FROM production_reports WHERE devition_id = ? AND unit_id = ? AND report_date = ?");
                 $check->execute([$save_data['devition_id'], $save_data['unit_id'], $save_data['report_date']]);
                 $existing = $check->fetch(PDO::FETCH_ASSOC);
                 
                 if ($existing) {
-                    // Update
                     $sql = "UPDATE production_reports SET 
                             ttl_sam_pc = ?, unit_smv = ?, day_forecast = ?, unit_carder = ?, 
                             plan_hours = ?, worked_hours = ?, available_minutes = ?, 
@@ -129,7 +136,6 @@ try {
                         $existing['id']
                     ]);
                 } else {
-                    // Insert
                     $sql = "INSERT INTO production_reports (
                         report_date, devition_id, unit_id, ttl_sam_pc, unit_smv, 
                         day_forecast, unit_carder, plan_hours, worked_hours, 

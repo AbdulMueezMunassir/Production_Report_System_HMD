@@ -1,5 +1,5 @@
 <?php
-// includes/functions.php - COMPLETE WITH ALL FUNCTIONS
+// includes/functions.php - COMPLETE WITH ALL FUNCTIONS - FIXED
 require_once __DIR__ . '/../config/database.php';
 
 const TARGET_90 = 0.90;
@@ -53,21 +53,36 @@ function calcAchievedEff90($earnedMinutes, $availableMinutes, $planHours, $worke
 }
 
 // ============================================================
-// ASSEMBLY ROW FORMULAS (80% target) - Rows 20-31
+// ASSEMBLY ROW FORMULAS (80% target)
 // ============================================================
-function calcDayForecast80($carder, $sectionSmv) {
+function calcAssemblyDayForecast80($carder, $sectionSmv) {
     if ($sectionSmv <= 0 || $carder <= 0) return 0;
     return ($carder * 600 / $sectionSmv) * TARGET_80;
 }
 
+function calcAssemblyAvailableMinutes($carder, $planHours) {
+    return $carder * $planHours * 60;
+}
 
+function calcAssemblyPlanMinutes($dayForecast, $sectionSmv) {
+    return $dayForecast * $sectionSmv;
+}
+
+function calcAssemblyPlanEff($planMinutes, $availableMinutes) {
+    return safeDivide($planMinutes, $availableMinutes);
+}
+
+function calcAssemblyTarget100($carder, $sectionSmv) {
+    if ($sectionSmv <= 0) return 0;
+    return ($carder / $sectionSmv) * 60;
+}
 
 function calcAssemblyEarnedMinutes($dayTotal, $ttlSamPc) {
     return $dayTotal * $ttlSamPc;
 }
 
 function calcAssemblyAchievedEff80($earnedMinutes, $availableMinutes, $planHours, $workedHours) {
-    if ($availableMinutes <= 0 || $workedHours <= 0) return 0;
+    if ($availableMinutes <= 0 || $workedHours <= 0 || $planHours <= 0) return 0;
     return ($earnedMinutes / $availableMinutes) * ($planHours / $workedHours);
 }
 
@@ -83,6 +98,7 @@ function calculateMatchOutFixed($conn, $division_id, $date, $work_hours, $compon
     }
     
     $match = [
+        'ttl_sam' => 0,
         'unit_smv' => 0,
         'unit_carder' => 0,
         'plan_hours' => 0,
@@ -107,6 +123,7 @@ function calculateMatchOutFixed($conn, $division_id, $date, $work_hours, $compon
         $data = getReportData($conn, $division_id, $comp['id'], $date);
         if (!empty($data) && ($data['unit_smv'] ?? 0) > 0) {
             $count++;
+            $match['ttl_sam'] += (float)($data['ttl_sam_pc'] ?? 0);
             $match['unit_smv'] += (float)$data['unit_smv'];
             $match['unit_carder'] += (int)$data['unit_carder'];
             $planHoursSum += (float)$data['plan_hours'];
@@ -118,6 +135,7 @@ function calculateMatchOutFixed($conn, $division_id, $date, $work_hours, $compon
     }
 
     if ($count > 0) {
+        $match['ttl_sam'] = $match['ttl_sam'] / $count;
         $match['plan_hours'] = $planHoursSum / $count;
         $match['worked_hours'] = $workedHoursSum / $count;
         
@@ -194,13 +212,21 @@ function calculateLeanTotalAssembly($assemblyRows, $work_hours) {
     foreach ($assemblyRows as $row) {
         if (isset($row['ttl_sam_pc']) && $row['ttl_sam_pc'] > 0) {
             $count++;
+            // E32: AVERAGE of TTL SAM/Pc
             $lt['ttl_sam'] += $row['ttl_sam_pc'];
+            // F32: AVERAGE of Section SAM/Pc
             $lt['section_sam'] += $row['unit_smv'];
+            // G32: SUM of Day Forecast
             $lt['day_forecast'] += $row['day_forecast'];
+            // H32: SUM of Assemble Carder
             $lt['assemble_carder'] += $row['unit_carder'];
+            // K32: SUM of Available Minutes
             $lt['available_minutes'] += $row['available_minutes'];
+            // L32: SUM of Plan Minutes
             $lt['plan_minutes'] += $row['plan_minutes'];
+            // N32: SUM of 100% Target
             $lt['target_100'] += $row['target_100'];
+            // O32:Y32: SUM of Hours
             for ($h = 1; $h <= $work_hours; $h++) {
                 $lt['hours'][$h] += $row["hour_$h"] ?? 0;
             }
@@ -211,19 +237,25 @@ function calculateLeanTotalAssembly($assemblyRows, $work_hours) {
     }
     
     if ($count > 0) {
+        // E32: AVERAGE of TTL SAM/Pc
         $lt['ttl_sam'] = $lt['ttl_sam'] / $count;
+        // F32: AVERAGE of Section SAM/Pc
         $lt['section_sam'] = $lt['section_sam'] / $count;
-        $lt['available_minutes'] = $lt['available_minutes'] / $count;
-        $lt['plan_minutes'] = $lt['plan_minutes'] / $count;
-        $lt['target_100'] = $lt['target_100'] / $count;
+        // K32: SUM of Available Minutes (already summed)
+        // L32: SUM of Plan Minutes (already summed)
+        // N32: SUM of 100% Target (already summed)
         $lt['plan_hours'] = 10;
         $lt['worked_hours'] = 10;
         
+        // O32:Y32: SUM of Hours (already summed)
         for ($h = 1; $h <= $work_hours; $h++) {
-            $lt['hours'][$h] = round($lt['hours'][$h] / $count, 0);
+            $lt['hours'][$h] = round($lt['hours'][$h], 0);
         }
+        // AA32: Day Total = SUM of Hours
         $lt['day_total'] = array_sum($lt['hours']);
-        $lt['ern_minutes'] = $lt['day_total'] * $lt['ttl_sam'];
+        // AB32: Earned Minutes = SUM of all Earned Minutes
+        // (calculated separately in the JavaScript)
+        // AC32: Achieved Efficiency = Earned Minutes / Available Minutes * (Plan Hours / Worked Hours)
         $lt['acvd_eff'] = ($lt['available_minutes'] > 0) ? ($lt['ern_minutes'] / $lt['available_minutes']) * ($lt['plan_hours'] / $lt['worked_hours']) : 0;
         $lt['dhu'] = ($lt['day_total'] > 0) ? round(($dhuTotal / $lt['day_total']) * 100, 1) : 0;
     }
@@ -256,6 +288,7 @@ function calculateGrandTotalAssembly($assemblyRows, $matchOutTrouser, $matchOutS
     
     $lt = calculateLeanTotalAssembly($assemblyRows, $work_hours);
     
+    // Get Match Out carders
     $shirtCarder = (!empty($matchOutShirt) && isset($matchOutShirt['unit_carder'])) ? $matchOutShirt['unit_carder'] : 0;
     $trouserCarder = (!empty($matchOutTrouser) && isset($matchOutTrouser['unit_carder'])) ? $matchOutTrouser['unit_carder'] : 0;
     
@@ -276,34 +309,43 @@ function calculateGrandTotalAssembly($assemblyRows, $matchOutTrouser, $matchOutS
         'acvd_eff' => 0
     ];
     
+    // H35: Assemble Carder = H32 + H14 + H8
     $gt['assemble_carder'] = $lt['assemble_carder'] + $trouserCarder + $shirtCarder;
-    $gt['available_minutes'] = (($gt['assemble_carder'] + $trouserCarder + $shirtCarder) * $gt['plan_hours']) * 60;
+    // K35: Available Minutes = ((H35 + H8 + H14) * I35) * 60
+    $gt['available_minutes'] = $gt['assemble_carder'] * $gt['plan_hours'] * 60;
     
+    // L35: Plan Minutes = SUM(G30*E30, G28*E28, G26*E26, G24*E24, E22*G22, E20*G20)
     $planMinSum = 0;
     foreach ($assemblyRows as $row) {
         $planMinSum += ($row['day_forecast'] ?? 0) * ($row['ttl_sam_pc'] ?? 0);
     }
     $gt['plan_minutes'] = $planMinSum;
     
+    // M35: Plan Eff = L35 / K35
     $gt['plan_eff'] = ($gt['available_minutes'] > 0) ? ($gt['plan_minutes'] / $gt['available_minutes']) : 0;
+    // N35: 100% Target = (H35 / E35) * 60
     $gt['target_100'] = ($gt['ttl_sam'] > 0) ? ($gt['assemble_carder'] / $gt['ttl_sam']) * 60 : 0;
     
+    // O35:Y35: SUM(Hour * SAM) / (H35 * 60)
     for ($h = 1; $h <= $work_hours; $h++) {
         $numerator = 0;
         foreach ($assemblyRows as $row) {
             $numerator += ($row["hour_$h"] ?? 0) * ($row['ttl_sam_pc'] ?? 0);
         }
-        $gt['hours'][$h] = ($gt['assemble_carder'] * 1 * 60 > 0) ? $numerator / ($gt['assemble_carder'] * 1 * 60) : 0;
+        $gt['hours'][$h] = ($gt['assemble_carder'] * 60 > 0) ? $numerator / ($gt['assemble_carder'] * 60) : 0;
     }
     
+    // AA35: Day Total = AA32
     $gt['day_total'] = $lt['day_total'];
     
+    // AB35: Earned Minutes = SUM(AA30*E30, AA28*E28, AA26*E26, AA24*E24, E22*AA22, E20*AA20)
     $earnedSum = 0;
     foreach ($assemblyRows as $row) {
         $earnedSum += ($row['day_total'] ?? 0) * ($row['ttl_sam_pc'] ?? 0);
     }
     $gt['ern_minutes'] = $earnedSum;
     
+    // AC35: Achieved Efficiency = AB35 / K35 * (I35 / J35)
     $gt['acvd_eff'] = ($gt['available_minutes'] > 0) ? ($gt['ern_minutes'] / $gt['available_minutes']) * ($gt['plan_hours'] / $gt['worked_hours']) : 0;
     
     return $gt;
