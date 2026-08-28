@@ -1,5 +1,5 @@
 <?php
-// includes/functions.php - COMPLETE WITH ALL FUNCTIONS - FIXED
+// includes/functions.php - COMPLETE WITH ALL FUNCTIONS
 require_once __DIR__ . '/../config/database.php';
 
 const TARGET_90 = 0.90;
@@ -87,7 +87,7 @@ function calcAssemblyAchievedEff80($earnedMinutes, $availableMinutes, $planHours
 }
 
 // ============================================================
-// MATCH OUT FORMULAS - SHIRT (Row 8) & TROUSER (Row 14) ONLY
+// MATCH OUT CALCULATION - SHIRT (Row 8) & TROUSER (Row 14)
 // ============================================================
 function calculateMatchOutFixed($conn, $division_id, $date, $work_hours, $components = null) {
     if ($components === null) {
@@ -166,7 +166,105 @@ function calculateMatchOutFixed($conn, $division_id, $date, $work_hours, $compon
 }
 
 // ============================================================
-// ASSEMBLY LEAN TOTAL CALCULATION - Row 32
+// SAVE MATCH OUT DATA
+// ============================================================
+function saveMatchOutData($conn, $division_id, $date, $work_hours, $components = null) {
+    $match = calculateMatchOutFixed($conn, $division_id, $date, $work_hours, $components);
+    if (empty($match) || $match['unit_smv'] == 0) {
+        return false;
+    }
+    
+    // Use a special unit_id for match out (999)
+    $unit_id = 999;
+    
+    $data = [
+        'report_date' => $date,
+        'devition_id' => $division_id,
+        'unit_id' => $unit_id,
+        'ttl_sam_pc' => $match['ttl_sam'],
+        'unit_smv' => $match['unit_smv'],
+        'day_forecast' => $match['day_forecast'],
+        'unit_carder' => $match['unit_carder'],
+        'plan_hours' => $match['plan_hours'],
+        'worked_hours' => $match['worked_hours'],
+        'available_minutes' => $match['available_minutes'],
+        'plan_minutes' => $match['plan_minutes'],
+        'plan_eff' => $match['plan_eff'],
+        'target_100' => $match['target_100'],
+        'day_total' => $match['day_total'],
+        'acvd_eff' => $match['acvd_eff'],
+        'ern_minutes' => $match['earned_minutes']
+    ];
+    
+    for ($h = 1; $h <= 11; $h++) {
+        $data["hour_$h"] = $match['hours'][$h] ?? 0;
+    }
+    
+    return saveReportData($conn, $data, $work_hours);
+}
+
+// ============================================================
+// SAVE DHU DATA
+// ============================================================
+function saveDHUData($conn, $division_id, $date, $work_hours, $components = null) {
+    if ($components === null) {
+        $components = getComponents($conn, $division_id);
+    }
+    if (!is_array($components) || empty($components)) {
+        return false;
+    }
+    
+    $dhu_data = array_fill(1, 11, 0);
+    $total_day = 0;
+    $dhu_total = 0;
+    
+    foreach ($components as $comp) {
+        if ($comp['is_match_out']) continue;
+        $report = getReportData($conn, $division_id, $comp['id'], $date);
+        if (!empty($report) && ($report['day_total'] ?? 0) > 0) {
+            for ($h = 1; $h <= $work_hours; $h++) {
+                $hour_val = (float)($report["hour_$h"] ?? 0);
+                $dhu_data[$h] += ($hour_val / 100) * 5;
+            }
+            $total_day += $report['day_total'];
+        }
+    }
+    
+    if ($total_day == 0) {
+        return false;
+    }
+    
+    // Use a special unit_id for DHU (998)
+    $unit_id = 998;
+    
+    $data = [
+        'report_date' => $date,
+        'devition_id' => $division_id,
+        'unit_id' => $unit_id,
+        'ttl_sam_pc' => 0,
+        'unit_smv' => 0,
+        'day_forecast' => 0,
+        'unit_carder' => 0,
+        'plan_hours' => 10,
+        'worked_hours' => 10,
+        'available_minutes' => 0,
+        'plan_minutes' => 0,
+        'plan_eff' => 0,
+        'target_100' => 0,
+        'day_total' => 0,
+        'acvd_eff' => 0,
+        'ern_minutes' => 0
+    ];
+    
+    for ($h = 1; $h <= 11; $h++) {
+        $data["hour_$h"] = round($dhu_data[$h], 1);
+    }
+    
+    return saveReportData($conn, $data, $work_hours);
+}
+
+// ============================================================
+// LEAN TOTAL CALCULATION - Assembly Row 32
 // ============================================================
 function calculateLeanTotalAssembly($assemblyRows, $work_hours) {
     if (!is_array($assemblyRows) || empty($assemblyRows)) {
@@ -212,21 +310,13 @@ function calculateLeanTotalAssembly($assemblyRows, $work_hours) {
     foreach ($assemblyRows as $row) {
         if (isset($row['ttl_sam_pc']) && $row['ttl_sam_pc'] > 0) {
             $count++;
-            // E32: AVERAGE of TTL SAM/Pc
             $lt['ttl_sam'] += $row['ttl_sam_pc'];
-            // F32: AVERAGE of Section SAM/Pc
             $lt['section_sam'] += $row['unit_smv'];
-            // G32: SUM of Day Forecast
             $lt['day_forecast'] += $row['day_forecast'];
-            // H32: SUM of Assemble Carder
             $lt['assemble_carder'] += $row['unit_carder'];
-            // K32: SUM of Available Minutes
             $lt['available_minutes'] += $row['available_minutes'];
-            // L32: SUM of Plan Minutes
             $lt['plan_minutes'] += $row['plan_minutes'];
-            // N32: SUM of 100% Target
             $lt['target_100'] += $row['target_100'];
-            // O32:Y32: SUM of Hours
             for ($h = 1; $h <= $work_hours; $h++) {
                 $lt['hours'][$h] += $row["hour_$h"] ?? 0;
             }
@@ -237,30 +327,79 @@ function calculateLeanTotalAssembly($assemblyRows, $work_hours) {
     }
     
     if ($count > 0) {
-        // E32: AVERAGE of TTL SAM/Pc
         $lt['ttl_sam'] = $lt['ttl_sam'] / $count;
-        // F32: AVERAGE of Section SAM/Pc
         $lt['section_sam'] = $lt['section_sam'] / $count;
-        // K32: SUM of Available Minutes (already summed)
-        // L32: SUM of Plan Minutes (already summed)
-        // N32: SUM of 100% Target (already summed)
+        $lt['available_minutes'] = $lt['available_minutes'] / $count;
+        $lt['plan_minutes'] = $lt['plan_minutes'] / $count;
+        $lt['target_100'] = $lt['target_100'] / $count;
         $lt['plan_hours'] = 10;
         $lt['worked_hours'] = 10;
         
-        // O32:Y32: SUM of Hours (already summed)
         for ($h = 1; $h <= $work_hours; $h++) {
-            $lt['hours'][$h] = round($lt['hours'][$h], 0);
+            $lt['hours'][$h] = round($lt['hours'][$h] / $count, 0);
         }
-        // AA32: Day Total = SUM of Hours
         $lt['day_total'] = array_sum($lt['hours']);
-        // AB32: Earned Minutes = SUM of all Earned Minutes
-        // (calculated separately in the JavaScript)
-        // AC32: Achieved Efficiency = Earned Minutes / Available Minutes * (Plan Hours / Worked Hours)
+        $lt['ern_minutes'] = $lt['day_total'] * $lt['ttl_sam'];
         $lt['acvd_eff'] = ($lt['available_minutes'] > 0) ? ($lt['ern_minutes'] / $lt['available_minutes']) * ($lt['plan_hours'] / $lt['worked_hours']) : 0;
         $lt['dhu'] = ($lt['day_total'] > 0) ? round(($dhuTotal / $lt['day_total']) * 100, 1) : 0;
     }
     
     return $lt;
+}
+
+// ============================================================
+// SAVE LEAN TOTAL DATA - Assembly
+// ============================================================
+function saveLeanTotalData($conn, $division_id, $date, $work_hours, $components = null) {
+    if ($components === null) {
+        $components = getComponents($conn, $division_id);
+    }
+    if (!is_array($components) || empty($components)) {
+        return false;
+    }
+    
+    $assembly_rows = [];
+    foreach ($components as $comp) {
+        if ($comp['is_match_out']) continue;
+        $data = getReportData($conn, $division_id, $comp['id'], $date);
+        if (!empty($data) && ($data['ttl_sam_pc'] ?? 0) > 0) {
+            $assembly_rows[] = $data;
+        }
+    }
+    
+    if (empty($assembly_rows)) {
+        return false;
+    }
+    
+    $lt = calculateLeanTotalAssembly($assembly_rows, $work_hours);
+    
+    // Use a special unit_id for Lean Total (997)
+    $unit_id = 997;
+    
+    $data = [
+        'report_date' => $date,
+        'devition_id' => $division_id,
+        'unit_id' => $unit_id,
+        'ttl_sam_pc' => $lt['ttl_sam'],
+        'unit_smv' => $lt['section_sam'],
+        'day_forecast' => $lt['day_forecast'],
+        'unit_carder' => $lt['assemble_carder'],
+        'plan_hours' => $lt['plan_hours'],
+        'worked_hours' => $lt['worked_hours'],
+        'available_minutes' => $lt['available_minutes'],
+        'plan_minutes' => $lt['plan_minutes'],
+        'plan_eff' => $lt['plan_eff'],
+        'target_100' => $lt['target_100'],
+        'day_total' => $lt['day_total'],
+        'acvd_eff' => $lt['acvd_eff'],
+        'ern_minutes' => $lt['ern_minutes']
+    ];
+    
+    for ($h = 1; $h <= 11; $h++) {
+        $data["hour_$h"] = $lt['hours'][$h] ?? 0;
+    }
+    
+    return saveReportData($conn, $data, $work_hours);
 }
 
 // ============================================================
@@ -288,7 +427,6 @@ function calculateGrandTotalAssembly($assemblyRows, $matchOutTrouser, $matchOutS
     
     $lt = calculateLeanTotalAssembly($assemblyRows, $work_hours);
     
-    // Get Match Out carders
     $shirtCarder = (!empty($matchOutShirt) && isset($matchOutShirt['unit_carder'])) ? $matchOutShirt['unit_carder'] : 0;
     $trouserCarder = (!empty($matchOutTrouser) && isset($matchOutTrouser['unit_carder'])) ? $matchOutTrouser['unit_carder'] : 0;
     
@@ -309,24 +447,18 @@ function calculateGrandTotalAssembly($assemblyRows, $matchOutTrouser, $matchOutS
         'acvd_eff' => 0
     ];
     
-    // H35: Assemble Carder = H32 + H14 + H8
     $gt['assemble_carder'] = $lt['assemble_carder'] + $trouserCarder + $shirtCarder;
-    // K35: Available Minutes = ((H35 + H8 + H14) * I35) * 60
     $gt['available_minutes'] = $gt['assemble_carder'] * $gt['plan_hours'] * 60;
     
-    // L35: Plan Minutes = SUM(G30*E30, G28*E28, G26*E26, G24*E24, E22*G22, E20*G20)
     $planMinSum = 0;
     foreach ($assemblyRows as $row) {
         $planMinSum += ($row['day_forecast'] ?? 0) * ($row['ttl_sam_pc'] ?? 0);
     }
     $gt['plan_minutes'] = $planMinSum;
     
-    // M35: Plan Eff = L35 / K35
     $gt['plan_eff'] = ($gt['available_minutes'] > 0) ? ($gt['plan_minutes'] / $gt['available_minutes']) : 0;
-    // N35: 100% Target = (H35 / E35) * 60
     $gt['target_100'] = ($gt['ttl_sam'] > 0) ? ($gt['assemble_carder'] / $gt['ttl_sam']) * 60 : 0;
     
-    // O35:Y35: SUM(Hour * SAM) / (H35 * 60)
     for ($h = 1; $h <= $work_hours; $h++) {
         $numerator = 0;
         foreach ($assemblyRows as $row) {
@@ -335,20 +467,95 @@ function calculateGrandTotalAssembly($assemblyRows, $matchOutTrouser, $matchOutS
         $gt['hours'][$h] = ($gt['assemble_carder'] * 60 > 0) ? $numerator / ($gt['assemble_carder'] * 60) : 0;
     }
     
-    // AA35: Day Total = AA32
     $gt['day_total'] = $lt['day_total'];
     
-    // AB35: Earned Minutes = SUM(AA30*E30, AA28*E28, AA26*E26, AA24*E24, E22*AA22, E20*AA20)
     $earnedSum = 0;
     foreach ($assemblyRows as $row) {
         $earnedSum += ($row['day_total'] ?? 0) * ($row['ttl_sam_pc'] ?? 0);
     }
     $gt['ern_minutes'] = $earnedSum;
     
-    // AC35: Achieved Efficiency = AB35 / K35 * (I35 / J35)
     $gt['acvd_eff'] = ($gt['available_minutes'] > 0) ? ($gt['ern_minutes'] / $gt['available_minutes']) * ($gt['plan_hours'] / $gt['worked_hours']) : 0;
     
     return $gt;
+}
+
+// ============================================================
+// SAVE FACTORY GRAND TOTAL DATA - Assembly
+// ============================================================
+function saveGrandTotalData($conn, $division_id, $date, $work_hours, $components = null) {
+    if ($components === null) {
+        $components = getComponents($conn, $division_id);
+    }
+    if (!is_array($components) || empty($components)) {
+        return false;
+    }
+    
+    $assembly_rows = [];
+    foreach ($components as $comp) {
+        if ($comp['is_match_out']) continue;
+        $data = getReportData($conn, $division_id, $comp['id'], $date);
+        if (!empty($data) && ($data['ttl_sam_pc'] ?? 0) > 0) {
+            $assembly_rows[] = $data;
+        }
+    }
+    
+    if (empty($assembly_rows)) {
+        return false;
+    }
+    
+    // Get shirt and trouser match out data
+    $shirt_match = calculateMatchOutFixed($conn, 1, $date, $work_hours);
+    $trouser_match = calculateMatchOutFixed($conn, 2, $date, $work_hours);
+    
+    $gt = calculateGrandTotalAssembly($assembly_rows, $trouser_match, $shirt_match, $work_hours);
+    
+    // Use a special unit_id for Factory Grand Total (996)
+    $unit_id = 996;
+    
+    $data = [
+        'report_date' => $date,
+        'devition_id' => $division_id,
+        'unit_id' => $unit_id,
+        'ttl_sam_pc' => $gt['ttl_sam'],
+        'unit_smv' => $gt['section_sam'],
+        'day_forecast' => $gt['day_forecast'],
+        'unit_carder' => $gt['assemble_carder'],
+        'plan_hours' => $gt['plan_hours'],
+        'worked_hours' => $gt['worked_hours'],
+        'available_minutes' => $gt['available_minutes'],
+        'plan_minutes' => $gt['plan_minutes'],
+        'plan_eff' => $gt['plan_eff'],
+        'target_100' => $gt['target_100'],
+        'day_total' => $gt['day_total'],
+        'acvd_eff' => $gt['acvd_eff'],
+        'ern_minutes' => $gt['ern_minutes']
+    ];
+    
+    for ($h = 1; $h <= 11; $h++) {
+        $data["hour_$h"] = $gt['hours'][$h] ?? 0;
+    }
+    
+    return saveReportData($conn, $data, $work_hours);
+}
+
+// ============================================================
+// SAVE ALL SUMMARY ROWS
+// ============================================================
+function saveAllSummaryRows($conn, $division_id, $date, $work_hours, $is_assembly = false) {
+    $components = getComponents($conn, $division_id);
+    
+    if ($is_assembly) {
+        // Save Lean Total and Factory Grand Total for Assembly
+        saveLeanTotalData($conn, $division_id, $date, $work_hours, $components);
+        saveGrandTotalData($conn, $division_id, $date, $work_hours, $components);
+    } else {
+        // Save Match Out and DHU for Shirt/Trouser
+        saveMatchOutData($conn, $division_id, $date, $work_hours, $components);
+        saveDHUData($conn, $division_id, $date, $work_hours, $components);
+    }
+    
+    return true;
 }
 
 // ============================================================

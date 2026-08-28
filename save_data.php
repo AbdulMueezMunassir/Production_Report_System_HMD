@@ -1,5 +1,5 @@
 <?php
-// save_data.php - COMPLETE FIXED VERSION WITH CORRECT FORMULAS
+// save_data.php - COMPLETE FIXED VERSION WITH SUMMARY ROWS
 session_start();
 require_once 'config/database.php';
 require_once 'includes/auth.php';
@@ -47,19 +47,14 @@ try {
             
             if ($is_assembly) {
                 // ASSEMBLY FORMULAS (80% target)
-                // Day Forecast = (Assemble Carder * 600 / Section SAM/Pc) * 80%
                 if ($save_data['unit_smv'] > 0 && $save_data['unit_carder'] > 0) {
                     $save_data['day_forecast'] = ($save_data['unit_carder'] * 600 / $save_data['unit_smv']) * 0.80;
                 } else {
                     $save_data['day_forecast'] = 0;
                 }
-                // Available Minutes = (Assemble Carder * Plan Hours) * 60
                 $save_data['available_minutes'] = $save_data['unit_carder'] * $save_data['plan_hours'] * 60;
-                // Plan Minutes = Day Forecast * Section SAM/Pc
                 $save_data['plan_minutes'] = $save_data['day_forecast'] * $save_data['unit_smv'];
-                // Plan Eff = Plan Minutes / Available Minutes
                 $save_data['plan_eff'] = ($save_data['available_minutes'] > 0) ? ($save_data['plan_minutes'] / $save_data['available_minutes']) : 0;
-                // 100% Target = (Assemble Carder / Section SAM/Pc) * 60
                 $save_data['target_100'] = ($save_data['unit_smv'] > 0) ? ($save_data['unit_carder'] / $save_data['unit_smv']) * 60 : 0;
                 
                 $day_total = 0;
@@ -67,10 +62,8 @@ try {
                     $day_total += $save_data["hour_$h"];
                 }
                 $save_data['day_total'] = $day_total;
-                // Assembly: Earned Minutes = Day Total * TTL SAM/Pc
                 $save_data['ern_minutes'] = $day_total * $save_data['ttl_sam_pc'];
                 
-                // Assembly: Achieved Efficiency = Earned Minutes / Available Minutes * (Plan Hours / Worked Hours)
                 if ($save_data['available_minutes'] > 0 && $save_data['worked_hours'] > 0 && $save_data['plan_hours'] > 0) {
                     $save_data['acvd_eff'] = ($save_data['ern_minutes'] / $save_data['available_minutes']) * ($save_data['plan_hours'] / $save_data['worked_hours']);
                 } else {
@@ -78,19 +71,14 @@ try {
                 }
             } else {
                 // SHIRT/TROUSER FORMULAS (90% target)
-                // Day Forecast = (Unit Carder * 600 / Unit SMV) * 90%
                 if ($save_data['unit_smv'] > 0 && $save_data['unit_carder'] > 0) {
                     $save_data['day_forecast'] = ($save_data['unit_carder'] * 600 / $save_data['unit_smv']) * 0.90;
                 } else {
                     $save_data['day_forecast'] = 0;
                 }
-                // Available Minutes = (Unit Carder * Plan Hours) * 60
                 $save_data['available_minutes'] = $save_data['unit_carder'] * $save_data['plan_hours'] * 60;
-                // Plan Minutes = Day Forecast * Unit SMV
                 $save_data['plan_minutes'] = $save_data['day_forecast'] * $save_data['unit_smv'];
-                // Plan Eff = Plan Minutes / Available Minutes
                 $save_data['plan_eff'] = ($save_data['available_minutes'] > 0) ? ($save_data['plan_minutes'] / $save_data['available_minutes']) : 0;
-                // 100% Target = (Unit Carder / Unit SMV) * 60
                 $save_data['target_100'] = ($save_data['unit_smv'] > 0) ? ($save_data['unit_carder'] / $save_data['unit_smv']) * 60 : 0;
                 
                 $day_total = 0;
@@ -98,10 +86,8 @@ try {
                     $day_total += $save_data["hour_$h"];
                 }
                 $save_data['day_total'] = $day_total;
-                // Shirt/Trouser: Earned Minutes = Day Total * Unit SMV
                 $save_data['ern_minutes'] = $day_total * $save_data['unit_smv'];
                 
-                // Shirt/Trouser: Achieved Efficiency = Earned Minutes / ((Available Minutes / Plan Hours) * Worked Hours)
                 $denominator = 1;
                 if ($save_data['available_minutes'] > 0 && $save_data['plan_hours'] > 0) {
                     $denominator = ($save_data['available_minutes'] / $save_data['plan_hours']) * $save_data['worked_hours'];
@@ -109,6 +95,7 @@ try {
                 $save_data['acvd_eff'] = ($denominator > 0) ? ($save_data['ern_minutes'] / $denominator) : 0;
             }
             
+            // Save the main row
             try {
                 $check = $conn->prepare("SELECT id FROM production_reports WHERE devition_id = ? AND unit_id = ? AND report_date = ?");
                 $check->execute([$save_data['devition_id'], $save_data['unit_id'], $save_data['report_date']]);
@@ -159,6 +146,15 @@ try {
                 }
                 
                 if ($result) {
+                    // After saving the main row, save summary rows
+                    // Check if this is a regular component (not summary row)
+                    $is_summary_row = in_array($component_id, [996, 997, 998, 999]);
+                    
+                    if (!$is_summary_row) {
+                        // Save Match Out, DHU, Lean Total, Factory Grand Total
+                        saveAllSummaryRows($conn, $division_id, $date, $work_hours, $is_assembly);
+                    }
+                    
                     $response['success'] = true;
                     $response['message'] = 'Saved successfully';
                     $response['data'] = [
