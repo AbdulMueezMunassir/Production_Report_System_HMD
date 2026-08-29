@@ -1,5 +1,5 @@
 <?php
-// analytics.php - Complete Analytics Dashboard with Charts & Graphs
+// analytics.php - Complete Analytics Dashboard with Saved Data
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/functions.php';
@@ -8,6 +8,11 @@ requireLogin();
 
 $conn = getDB();
 $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
+
+// Start session only if not already started
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
 // Get filter parameters
 $selected_division = isset($_GET['division']) ? (int)$_GET['division'] : 1;
@@ -38,121 +43,29 @@ $division_icons = [
 ];
 
 // ============================================================
-// DATA RETRIEVAL FUNCTIONS
+// FUNCTIONS TO GET SAVED DATA FROM DATABASE
 // ============================================================
 
-function getDivisionComponents($conn, $division_id) {
-    $components = getComponents($conn, $division_id);
-    $result = [];
-    foreach ($components as $comp) {
-        if (!$comp['is_match_out']) {
-            $result[] = $comp['name'];
-        }
-    }
-    if (empty($result)) {
-        $result = ['Front', 'Back', 'Sleeve', 'Collar', 'Cuff'];
-    }
-    return $result;
+function getSavedComponentData($conn, $division_id, $date) {
+    $stmt = $conn->prepare("SELECT * FROM production_reports WHERE devition_id = ? AND report_date = ? AND unit_id NOT IN (996, 997, 998, 999) ORDER BY unit_id");
+    $stmt->execute([$division_id, $date]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
-function getComponentWiseData($conn, $division_id, $date, $work_hours) {
-    $components = getComponents($conn, $division_id);
-    $result = [];
-    
-    foreach ($components as $comp) {
-        if ($comp['is_match_out']) continue;
-        $report = getReportData($conn, $division_id, $comp['id'], $date);
-        if (!empty($report) && ($report['ttl_sam_pc'] ?? 0) > 0) {
-            $row = [
-                'name' => $comp['name'],
-                'budget' => $report['unit_carder'] ?? 0,
-                'present' => $report['unit_carder'] ?? 0,
-                'hours' => [],
-                'total' => 0
-            ];
-            for ($h = 1; $h <= $work_hours; $h++) {
-                $pcs = (float)($report["hour_$h"] ?? 0);
-                $eff = (float)($report["acvd_eff"] ?? 0) * 100;
-                $row['hours'][] = ['pcs' => $pcs, 'eff' => $eff];
-                $row['total'] += $pcs;
-            }
-            $result[] = $row;
-        }
-    }
-    return $result;
+function getSavedSummaryData($conn, $division_id, $date) {
+    $stmt = $conn->prepare("SELECT * FROM production_reports WHERE devition_id = ? AND report_date = ? AND unit_id IN (996, 997, 998, 999) ORDER BY unit_id");
+    $stmt->execute([$division_id, $date]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
-function getMatchOutData($conn, $division_id, $date, $work_hours) {
-    $components = getComponents($conn, $division_id);
-    $match = [
-        'unit_smv' => 0,
-        'unit_carder' => 0,
-        'hours' => array_fill(1, $work_hours, 0),
-        'day_total' => 0
-    ];
-    $count = 0;
-    
-    foreach ($components as $comp) {
-        if ($comp['is_match_out']) continue;
-        $report = getReportData($conn, $division_id, $comp['id'], $date);
-        if (!empty($report) && ($report['unit_smv'] ?? 0) > 0) {
-            $count++;
-            $match['unit_smv'] += (float)$report['unit_smv'];
-            $match['unit_carder'] += (int)$report['unit_carder'];
-            for ($h = 1; $h <= $work_hours; $h++) {
-                $match['hours'][$h] += (float)($report["hour_$h"] ?? 0);
-            }
-        }
-    }
-    
-    if ($count > 0) {
-        $match['unit_smv'] = $match['unit_smv'] / $count;
-        $match['unit_carder'] = $match['unit_carder'] / $count;
-        for ($h = 1; $h <= $work_hours; $h++) {
-            $match['hours'][$h] = round($match['hours'][$h] / $count, 0);
-        }
-        $match['day_total'] = array_sum($match['hours']);
-    }
-    
-    return $match;
-}
-
-function getDHUData($conn, $division_id, $date, $work_hours) {
-    $components = getComponents($conn, $division_id);
-    $dhu_data = array_fill(1, $work_hours, 0);
-    $count = 0;
-    
-    foreach ($components as $comp) {
-        if ($comp['is_match_out']) continue;
-        $report = getReportData($conn, $division_id, $comp['id'], $date);
-        if (!empty($report) && ($report['day_total'] ?? 0) > 0) {
-            $count++;
-            for ($h = 1; $h <= $work_hours; $h++) {
-                $hour_val = (float)($report["hour_$h"] ?? 0);
-                $dhu_data[$h] += ($hour_val / 100) * 5;
-            }
-        }
-    }
-    
-    if ($count > 0) {
-        for ($h = 1; $h <= $work_hours; $h++) {
-            $dhu_data[$h] = round($dhu_data[$h] / $count, 1);
-        }
-    }
-    
-    return $dhu_data;
-}
-
-function getHourlyData($conn, $division_id, $date, $work_hours) {
-    $components = getComponents($conn, $division_id);
+function getSavedHourlyData($conn, $division_id, $date, $work_hours) {
+    $components = getSavedComponentData($conn, $division_id, $date);
     $data = array_fill(1, $work_hours, 0);
     $eff = array_fill(1, $work_hours, 0);
     $count = 0;
     
-    foreach ($components as $comp) {
-        if ($comp['is_match_out']) continue;
-        $report = getReportData($conn, $division_id, $comp['id'], $date);
-        if (!empty($report) && ($report['ttl_sam_pc'] ?? 0) > 0) {
+    foreach ($components as $report) {
+        if (($report['ttl_sam_pc'] ?? 0) > 0) {
             $count++;
             for ($h = 1; $h <= $work_hours; $h++) {
                 $data[$h] += (float)($report["hour_$h"] ?? 0);
@@ -171,7 +84,60 @@ function getHourlyData($conn, $division_id, $date, $work_hours) {
     return ['data' => $data, 'eff' => $eff];
 }
 
-function getTrendData($conn, $division_id, $days) {
+function getSavedDHUData($conn, $division_id, $date, $work_hours) {
+    $dhu_data = array_fill(1, $work_hours, 0);
+    
+    // Check if DHU summary row exists (unit_id: 998)
+    $stmt = $conn->prepare("SELECT * FROM production_reports WHERE devition_id = ? AND report_date = ? AND unit_id = 998");
+    $stmt->execute([$division_id, $date]);
+    $dhu_row = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if ($dhu_row && ($dhu_row['day_total'] ?? 0) > 0) {
+        for ($h = 1; $h <= $work_hours; $h++) {
+            $dhu_data[$h] = (float)($dhu_row["hour_$h"] ?? 0);
+        }
+    } else {
+        // Calculate from components if no saved DHU
+        $components = getSavedComponentData($conn, $division_id, $date);
+        $count = 0;
+        foreach ($components as $report) {
+            if (($report['day_total'] ?? 0) > 0) {
+                $count++;
+                for ($h = 1; $h <= $work_hours; $h++) {
+                    $hour_val = (float)($report["hour_$h"] ?? 0);
+                    $dhu_data[$h] += ($hour_val / 100) * 5;
+                }
+            }
+        }
+        if ($count > 0) {
+            for ($h = 1; $h <= $work_hours; $h++) {
+                $dhu_data[$h] = round($dhu_data[$h] / $count, 1);
+            }
+        }
+    }
+    
+    return $dhu_data;
+}
+
+function getSavedMatchOutData($conn, $division_id, $date, $work_hours) {
+    $stmt = $conn->prepare("SELECT * FROM production_reports WHERE devition_id = ? AND report_date = ? AND unit_id = 999");
+    $stmt->execute([$division_id, $date]);
+    return $stmt->fetch(PDO::FETCH_ASSOC);
+}
+
+function getSavedLeanTotalData($conn, $division_id, $date) {
+    $stmt = $conn->prepare("SELECT * FROM production_reports WHERE devition_id = ? AND report_date = ? AND unit_id = 997");
+    $stmt->execute([$division_id, $date]);
+    return $stmt->fetch(PDO::FETCH_ASSOC);
+}
+
+function getSavedGrandTotalData($conn, $division_id, $date) {
+    $stmt = $conn->prepare("SELECT * FROM production_reports WHERE devition_id = ? AND report_date = ? AND unit_id = 996");
+    $stmt->execute([$division_id, $date]);
+    return $stmt->fetch(PDO::FETCH_ASSOC);
+}
+
+function getSavedTrendData($conn, $division_id, $days) {
     $trend_data = [];
     $dhu_trend = [];
     
@@ -179,7 +145,7 @@ function getTrendData($conn, $division_id, $days) {
         $stmt = $conn->prepare("
             SELECT DISTINCT report_date 
             FROM production_reports 
-            WHERE devition_id = ? 
+            WHERE devition_id = ? AND unit_id NOT IN (996, 997, 998, 999)
             ORDER BY report_date DESC 
             LIMIT ?
         ");
@@ -188,8 +154,8 @@ function getTrendData($conn, $division_id, $days) {
         $dates = array_reverse($dates);
         
         foreach ($dates as $date) {
-            $hourly = getHourlyData($conn, $division_id, $date, 10);
-            $dhu = getDHUData($conn, $division_id, $date, 10);
+            $hourly = getSavedHourlyData($conn, $division_id, $date, 10);
+            $dhu = getSavedDHUData($conn, $division_id, $date, 10);
             
             $total_pcs = array_sum($hourly['data']);
             $avg_eff = count($hourly['eff']) > 0 ? round(array_sum($hourly['eff']) / count($hourly['eff']), 1) : 0;
@@ -206,7 +172,7 @@ function getTrendData($conn, $division_id, $days) {
             ];
         }
     } catch (Exception $e) {
-        // Generate sample data
+        // Generate sample data if no data exists
         $base_pcs = [1 => 790, 2 => 750, 3 => 700, 7 => 762];
         $base = $base_pcs[$division_id] ?? 750;
         $trend_data = [];
@@ -229,67 +195,111 @@ function getTrendData($conn, $division_id, $days) {
 }
 
 // ============================================================
-// GET DATA BASED ON FILTER
+// GET DATA FROM DATABASE
 // ============================================================
+
+// Get saved data
+$component_data = [];
+$summary_rows = [];
+
 if ($filter_type === 'date') {
-    $hourly_data = getHourlyData($conn, $selected_division, $selected_date, $work_hours);
-    $dhu_data = getDHUData($conn, $selected_division, $selected_date, $work_hours);
-    $component_data = getComponentWiseData($conn, $selected_division, $selected_date, $work_hours);
-    $match_out = getMatchOutData($conn, $selected_division, $selected_date, $work_hours);
+    // Get saved components
+    $saved_components = getSavedComponentData($conn, $selected_division, $selected_date);
+    foreach ($saved_components as $report) {
+        $component_data[$report['unit_id']] = $report;
+    }
+    
+    // Get saved summary rows
+    $saved_summary = getSavedSummaryData($conn, $selected_division, $selected_date);
+    foreach ($saved_summary as $report) {
+        $unit_id = $report['unit_id'];
+        if ($unit_id == 999) $summary_rows['match_out'] = $report;
+        elseif ($unit_id == 998) $summary_rows['dhu'] = $report;
+        elseif ($unit_id == 997) $summary_rows['lean_total'] = $report;
+        elseif ($unit_id == 996) $summary_rows['grand_total'] = $report;
+    }
+    
     $display_date = date('M d, Y', strtotime($selected_date));
 } else {
+    // Month filter - average data from all days in month
     $month_start = $selected_month . '-01';
     $month_end = date('Y-m-t', strtotime($month_start));
-    $hourly_data = ['data' => array_fill(1, $work_hours, 0), 'eff' => array_fill(1, $work_hours, 0)];
-    $dhu_data = array_fill(1, $work_hours, 0);
-    $component_data = [];
-    $match_out = ['hours' => array_fill(1, $work_hours, 0), 'day_total' => 0];
-    $count_days = 0;
     
-    try {
-        $stmt = $conn->prepare("
-            SELECT DISTINCT report_date 
-            FROM production_reports 
-            WHERE devition_id = ? AND report_date BETWEEN ? AND ?
-            ORDER BY report_date
-        ");
-        $stmt->execute([$selected_division, $month_start, $month_end]);
-        $dates = $stmt->fetchAll(PDO::FETCH_COLUMN);
-        $count_days = count($dates);
-        
-        foreach ($dates as $date) {
-            $hourly = getHourlyData($conn, $selected_division, $date, $work_hours);
-            $dhu = getDHUData($conn, $selected_division, $date, $work_hours);
-            for ($h = 1; $h <= $work_hours; $h++) {
-                $hourly_data['data'][$h] += $hourly['data'][$h];
-                $hourly_data['eff'][$h] += $hourly['eff'][$h];
-                $dhu_data[$h] += $dhu[$h];
-            }
+    // Get all dates in the month
+    $stmt = $conn->prepare("
+        SELECT DISTINCT report_date 
+        FROM production_reports 
+        WHERE devition_id = ? AND report_date BETWEEN ? AND ?
+        ORDER BY report_date
+    ");
+    $stmt->execute([$selected_division, $month_start, $month_end]);
+    $dates = $stmt->fetchAll(PDO::FETCH_COLUMN);
+    $count_days = count($dates);
+    
+    // Aggregate data from all dates
+    $agg_data = [];
+    $agg_eff = [];
+    $agg_dhu = [];
+    
+    foreach ($dates as $date) {
+        $hourly = getSavedHourlyData($conn, $selected_division, $date, $work_hours);
+        $dhu = getSavedDHUData($conn, $selected_division, $date, $work_hours);
+        for ($h = 1; $h <= $work_hours; $h++) {
+            $agg_data[$h] = ($agg_data[$h] ?? 0) + $hourly['data'][$h];
+            $agg_eff[$h] = ($agg_eff[$h] ?? 0) + $hourly['eff'][$h];
+            $agg_dhu[$h] = ($agg_dhu[$h] ?? 0) + $dhu[$h];
         }
-        
-        if ($count_days > 0) {
-            for ($h = 1; $h <= $work_hours; $h++) {
-                $hourly_data['data'][$h] = round($hourly_data['data'][$h] / $count_days, 0);
-                $hourly_data['eff'][$h] = round($hourly_data['eff'][$h] / $count_days, 1);
-                $dhu_data[$h] = round($dhu_data[$h] / $count_days, 1);
-            }
+    }
+    
+    // Average the data
+    if ($count_days > 0) {
+        for ($h = 1; $h <= $work_hours; $h++) {
+            $hourly_data['data'][$h] = round(($agg_data[$h] ?? 0) / $count_days, 0);
+            $hourly_data['eff'][$h] = round(($agg_eff[$h] ?? 0) / $count_days, 1);
+            $dhu_data[$h] = round(($agg_dhu[$h] ?? 0) / $count_days, 1);
         }
-    } catch (Exception $e) {
+    } else {
         $hourly_data = ['data' => array_fill(1, $work_hours, 0), 'eff' => array_fill(1, $work_hours, 0)];
         $dhu_data = array_fill(1, $work_hours, 0);
     }
+    
     $display_date = date('F Y', strtotime($selected_month));
 }
 
-$component_names = getDivisionComponents($conn, $selected_division);
-$trend_data = getTrendData($conn, $selected_division, 30);
-$division_name = $division_names[$selected_division] ?? 'Division';
+// Get hourly data for display
+if ($filter_type === 'date') {
+    $hourly_data = getSavedHourlyData($conn, $selected_division, $selected_date, $work_hours);
+    $dhu_data = getSavedDHUData($conn, $selected_division, $selected_date, $work_hours);
+    $match_out = getSavedMatchOutData($conn, $selected_division, $selected_date, $work_hours);
+    $lean_total = getSavedLeanTotalData($conn, $selected_division, $selected_date);
+    $grand_total = getSavedGrandTotalData($conn, $selected_division, $selected_date);
+}
+
+// Get trend data
+$trend_data = getSavedTrendData($conn, $selected_division, 30);
+
+// Get component names for display
+$component_names = [];
+foreach ($component_data as $report) {
+    // Get component name from database
+    $stmt = $conn->prepare("SELECT name FROM components WHERE id = ?");
+    $stmt->execute([$report['unit_id']]);
+    $comp = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($comp) {
+        $component_names[] = $comp['name'];
+    }
+}
+if (empty($component_names)) {
+    $component_names = ['Front', 'Back', 'Sleeve', 'Collar', 'Cuff'];
+}
 
 // Calculate totals
 $total_pcs = array_sum($hourly_data['data']);
 $avg_eff = count($hourly_data['eff']) > 0 ? round(array_sum($hourly_data['eff']) / count($hourly_data['eff']), 1) : 0;
 $avg_dhu = count($dhu_data) > 0 ? round(array_sum($dhu_data) / count($dhu_data), 1) : 0;
 $loss_profit = round($total_pcs * 0.246, 0);
+
+$division_name = $division_names[$selected_division] ?? 'Division';
 
 // Prepare chart data
 $chart_labels = range(1, $work_hours);
@@ -301,6 +311,13 @@ $trend_labels = array_map(function($item) { return date('M d', strtotime($item['
 $trend_pcs = array_map(function($item) { return $item['pcs']; }, $trend_data['production']);
 $trend_eff = array_map(function($item) { return $item['eff']; }, $trend_data['production']);
 $trend_dhu = array_map(function($item) { return $item['dhu']; }, $trend_data['dhu']);
+
+// Check if summary rows exist
+$has_match_out = isset($summary_rows['match_out']) && $summary_rows['match_out']['unit_smv'] > 0;
+$has_dhu = isset($summary_rows['dhu']) && $summary_rows['dhu']['day_total'] > 0;
+$has_lean_total = isset($summary_rows['lean_total']) && $summary_rows['lean_total']['ttl_sam_pc'] > 0;
+$has_grand_total = isset($summary_rows['grand_total']) && $summary_rows['grand_total']['ttl_sam_pc'] > 0;
+$is_assembly = ($selected_division == 7);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -588,6 +605,25 @@ $trend_dhu = array_map(function($item) { return $item['dhu']; }, $trend_data['dh
             margin-top: 4px;
         }
 
+        .summary-badges {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        .summary-badges .badge {
+            padding: 4px 14px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 700;
+            color: #fff;
+        }
+        .badge-match-out { background: #6c757d; }
+        .badge-dhu { background: #dc3545; }
+        .badge-lean { background: #17a2b8; }
+        .badge-grand { background: #6f42c1; }
+        .badge-no-data { background: #6c757d; opacity: 0.5; }
+
         .dashboard-table {
             width: 100%;
             border-collapse: collapse;
@@ -622,7 +658,7 @@ $trend_dhu = array_map(function($item) { return $item['dhu']; }, $trend_data['dh
             font-size: 12px;
         }
         .dashboard-table .match-out td {
-            background: rgba(33, 115, 70, 0.08);
+            background: rgba(108, 117, 125, 0.1);
             font-weight: 600;
         }
         .dashboard-table .dhu-row td {
@@ -632,6 +668,14 @@ $trend_dhu = array_map(function($item) { return $item['dhu']; }, $trend_data['dh
         }
         .dashboard-table .total-row td {
             background: rgba(33, 150, 243, 0.08);
+            font-weight: 700;
+        }
+        .dashboard-table .lean-total td {
+            background: rgba(23, 162, 184, 0.08);
+            font-weight: 700;
+        }
+        .dashboard-table .grand-total td {
+            background: rgba(111, 66, 193, 0.08);
             font-weight: 700;
         }
         .dashboard-table .loss-row td {
@@ -858,6 +902,25 @@ $trend_dhu = array_map(function($item) { return $item['dhu']; }, $trend_data['dh
             <button type="submit" class="btn-apply">Apply</button>
         </form>
 
+        <!-- Summary Badges -->
+        <div class="summary-badges">
+            <?php if ($has_match_out): ?>
+            <span class="badge badge-match-out">✅ Match Out</span>
+            <?php endif; ?>
+            <?php if ($has_dhu): ?>
+            <span class="badge badge-dhu">✅ DHU</span>
+            <?php endif; ?>
+            <?php if ($has_lean_total): ?>
+            <span class="badge badge-lean">✅ Lean Total</span>
+            <?php endif; ?>
+            <?php if ($has_grand_total): ?>
+            <span class="badge badge-grand">✅ Factory Grand Total</span>
+            <?php endif; ?>
+            <?php if (!$has_match_out && !$has_dhu && !$has_lean_total && !$has_grand_total): ?>
+            <span class="badge badge-no-data">No summary data available</span>
+            <?php endif; ?>
+        </div>
+
         <!-- Stats Cards -->
         <div class="stats-row">
             <div class="stat-card">
@@ -879,96 +942,93 @@ $trend_dhu = array_map(function($item) { return $item['dhu']; }, $trend_data['dh
         </div>
 
         <!-- ============================================================ -->
-        <!-- DASHBOARD TABLE - Like Excel Dashboard -->
+        <!-- DASHBOARD TABLE - Using Saved Data -->
         <!-- ============================================================ -->
         <table class="dashboard-table">
             <thead>
                 <tr>
                     <th rowspan="2" style="min-width:100px;">DASH BOARD</th>
-                    <th colspan="2"><?php echo $component_names[0] ?? 'Component 1'; ?></th>
-                    <th colspan="2"><?php echo $component_names[1] ?? 'Component 2'; ?></th>
-                    <th colspan="2"><?php echo $component_names[2] ?? 'Component 3'; ?></th>
-                    <th colspan="2"><?php echo $component_names[3] ?? 'Component 4'; ?></th>
-                    <th colspan="2"><?php echo $component_names[4] ?? 'Component 5'; ?></th>
+                    <?php foreach ($component_names as $name): ?>
+                    <th colspan="2"><?php echo htmlspecialchars($name); ?></th>
+                    <?php endforeach; ?>
+                    <?php if ($has_match_out): ?>
                     <th colspan="2">Match Out</th>
+                    <?php endif; ?>
                     <th rowspan="2">DHU %</th>
                 </tr>
                 <tr>
+                    <?php foreach ($component_names as $name): ?>
                     <th>Pcs</th><th>Eff</th>
+                    <?php endforeach; ?>
+                    <?php if ($has_match_out): ?>
                     <th>Pcs</th><th>Eff</th>
-                    <th>Pcs</th><th>Eff</th>
-                    <th>Pcs</th><th>Eff</th>
-                    <th>Pcs</th><th>Eff</th>
-                    <th>Pcs</th><th>Eff</th>
+                    <?php endif; ?>
                 </tr>
             </thead>
             <tbody>
                 <!-- Budget Row -->
                 <tr class="header-row">
                     <td style="text-align:left;">DIRECTS-BUDGET</td>
-                    <?php 
-                    $budget_values = [];
-                    foreach ($component_data as $row) {
-                        $budget_values[] = $row['budget'];
-                    }
-                    while (count($budget_values) < 5) { $budget_values[] = 0; }
-                    for ($i = 0; $i < 5; $i++): 
-                    ?>
-                    <td colspan="2"><?php echo $budget_values[$i]; ?></td>
-                    <?php endfor; ?>
+                    <?php foreach ($component_data as $report): ?>
+                    <td colspan="2"><?php echo $report['unit_carder'] ?? 0; ?></td>
+                    <?php endforeach; ?>
+                    <?php if ($has_match_out): ?>
                     <td colspan="2"><?php echo $match_out['unit_carder'] ?? 0; ?></td>
+                    <?php endif; ?>
                     <td>—</td>
                 </tr>
                 
                 <!-- Present Row -->
                 <tr class="header-row">
                     <td style="text-align:left;">DIRECTS-PRESENT</td>
-                    <?php 
-                    $present_values = [];
-                    foreach ($component_data as $row) {
-                        $present_values[] = $row['present'];
-                    }
-                    while (count($present_values) < 5) { $present_values[] = 0; }
-                    for ($i = 0; $i < 5; $i++): 
-                    ?>
-                    <td colspan="2"><?php echo $present_values[$i]; ?></td>
-                    <?php endfor; ?>
+                    <?php foreach ($component_data as $report): ?>
+                    <td colspan="2"><?php echo $report['unit_carder'] ?? 0; ?></td>
+                    <?php endforeach; ?>
+                    <?php if ($has_match_out): ?>
                     <td colspan="2"><?php echo $match_out['unit_carder'] ?? 0; ?></td>
+                    <?php endif; ?>
                     <td>—</td>
                 </tr>
                 
                 <!-- Absenteeism Row -->
                 <tr class="header-row">
                     <td style="text-align:left;">ABSENTEESM</td>
-                    <?php for ($i = 0; $i < 5; $i++): 
-                        $absenteeism = $budget_values[$i] > 0 ? round((($budget_values[$i] - $present_values[$i]) / $budget_values[$i]) * 100, 0) : 0;
+                    <?php foreach ($component_data as $report): 
+                        $budget = $report['unit_carder'] ?? 0;
+                        $present = $report['unit_carder'] ?? 0;
+                        $absenteeism = $budget > 0 ? round((($budget - $present) / $budget) * 100, 0) : 0;
                     ?>
                     <td colspan="2"><?php echo $absenteeism; ?>%</td>
-                    <?php endfor; ?>
+                    <?php endforeach; ?>
+                    <?php if ($has_match_out): ?>
                     <td colspan="2">—</td>
+                    <?php endif; ?>
                     <td>—</td>
                 </tr>
                 
                 <!-- Hourly Production Rows -->
-                <?php for ($h = 1; $h <= $work_hours; $h++): ?>
+                <?php 
+                $component_list = array_values($component_data);
+                for ($h = 1; $h <= $work_hours; $h++): 
+                ?>
                 <tr>
                     <td style="font-weight:700;"><?php echo $h; ?></td>
-                    <?php 
-                    $row_eff_classes = [];
-                    for ($i = 0; $i < count($component_data); $i++):
-                        $pcs = $component_data[$i]['hours'][$h-1]['pcs'] ?? 0;
-                        $eff = $component_data[$i]['hours'][$h-1]['eff'] ?? 0;
+                    <?php foreach ($component_list as $report): 
+                        $pcs = (float)($report["hour_$h"] ?? 0);
+                        $eff = (float)($report["acvd_eff"] ?? 0) * 100;
                         $eff_class = $eff >= 90 ? 'eff-good' : ($eff >= 70 ? 'eff-avg' : 'eff-bad');
                     ?>
                     <td><?php echo number_format($pcs, 0); ?></td>
                     <td class="<?php echo $eff_class; ?>"><?php echo number_format($eff, 1); ?>%</td>
-                    <?php endfor; ?>
-                    <?php 
-                    // Match Out hours
-                    $mo_pcs = $match_out['hours'][$h] ?? 0;
+                    <?php endforeach; ?>
+                    <?php if ($has_match_out): 
+                        $mo_pcs = (float)($match_out["hour_$h"] ?? 0);
+                        $mo_eff = (float)($match_out["acvd_eff"] ?? 0) * 100;
+                        $mo_eff_class = $mo_eff >= 90 ? 'eff-good' : ($mo_eff >= 70 ? 'eff-avg' : 'eff-bad');
                     ?>
                     <td><?php echo number_format($mo_pcs, 0); ?></td>
-                    <td>—</td>
+                    <td class="<?php echo $mo_eff_class; ?>"><?php echo number_format($mo_eff, 1); ?>%</td>
+                    <?php endif; ?>
                     <td><?php echo number_format($dhu_data[$h] ?? 0, 1); ?>%</td>
                 </tr>
                 <?php endfor; ?>
@@ -977,39 +1037,89 @@ $trend_dhu = array_map(function($item) { return $item['dhu']; }, $trend_data['dh
                 <tr class="total-row">
                     <td style="font-weight:700;">Average</td>
                     <?php 
-                    for ($i = 0; $i < count($component_data); $i++):
-                        $total = 0;
-                        $eff_sum = 0;
-                        for ($h = 0; $h < $work_hours; $h++) {
-                            $total += $component_data[$i]['hours'][$h]['pcs'] ?? 0;
-                            $eff_sum += $component_data[$i]['hours'][$h]['eff'] ?? 0;
+                    $total_component_pcs = [];
+                    $total_component_eff = [];
+                    foreach ($component_list as $idx => $report):
+                        $total_pcs_comp = 0;
+                        $total_eff_comp = 0;
+                        for ($h = 1; $h <= $work_hours; $h++) {
+                            $total_pcs_comp += (float)($report["hour_$h"] ?? 0);
+                            $total_eff_comp += (float)($report["acvd_eff"] ?? 0) * 100;
                         }
-                        $avg_eff = $work_hours > 0 ? round($eff_sum / $work_hours, 1) : 0;
-                        $eff_class = $avg_eff >= 90 ? 'eff-good' : ($avg_eff >= 70 ? 'eff-avg' : 'eff-bad');
+                        $avg_eff_comp = $work_hours > 0 ? round($total_eff_comp / $work_hours, 1) : 0;
+                        $eff_class = $avg_eff_comp >= 90 ? 'eff-good' : ($avg_eff_comp >= 70 ? 'eff-avg' : 'eff-bad');
                     ?>
-                    <td style="font-weight:700;"><?php echo number_format($total, 0); ?></td>
-                    <td class="<?php echo $eff_class; ?>" style="font-weight:700;"><?php echo number_format($avg_eff, 1); ?>%</td>
-                    <?php endfor; ?>
-                    <td style="font-weight:700;"><?php echo number_format($match_out['day_total'] ?? 0, 0); ?></td>
-                    <td>—</td>
+                    <td style="font-weight:700;"><?php echo number_format($total_pcs_comp, 0); ?></td>
+                    <td class="<?php echo $eff_class; ?>" style="font-weight:700;"><?php echo number_format($avg_eff_comp, 1); ?>%</td>
+                    <?php endforeach; ?>
+                    <?php if ($has_match_out): 
+                        $mo_total = 0;
+                        $mo_eff_total = 0;
+                        for ($h = 1; $h <= $work_hours; $h++) {
+                            $mo_total += (float)($match_out["hour_$h"] ?? 0);
+                            $mo_eff_total += (float)($match_out["acvd_eff"] ?? 0) * 100;
+                        }
+                        $mo_avg_eff = $work_hours > 0 ? round($mo_eff_total / $work_hours, 1) : 0;
+                    ?>
+                    <td style="font-weight:700;"><?php echo number_format($mo_total, 0); ?></td>
+                    <td style="font-weight:700;"><?php echo number_format($mo_avg_eff, 1); ?>%</td>
+                    <?php endif; ?>
                     <td style="font-weight:700;color:var(--dhu-color);"><?php echo number_format($avg_dhu, 1); ?>%</td>
                 </tr>
                 
                 <!-- Loss/Profit Row -->
                 <tr class="loss-row">
                     <td style="font-weight:700;">LOSS/PROFIT</td>
-                    <?php for ($i = 0; $i < count($component_data); $i++): 
+                    <?php foreach ($component_list as $report): 
                         $total = 0;
-                        for ($h = 0; $h < $work_hours; $h++) {
-                            $total += $component_data[$i]['hours'][$h]['pcs'] ?? 0;
+                        for ($h = 1; $h <= $work_hours; $h++) {
+                            $total += (float)($report["hour_$h"] ?? 0);
                         }
                         $loss = round($total * 0.246, 0);
                     ?>
                     <td colspan="2">LKR <?php echo number_format($loss); ?></td>
-                    <?php endfor; ?>
-                    <td colspan="2">LKR <?php echo number_format(round($match_out['day_total'] * 0.246, 0)); ?></td>
+                    <?php endforeach; ?>
+                    <?php if ($has_match_out): 
+                        $mo_total = 0;
+                        for ($h = 1; $h <= $work_hours; $h++) {
+                            $mo_total += (float)($match_out["hour_$h"] ?? 0);
+                        }
+                        $mo_loss = round($mo_total * 0.246, 0);
+                    ?>
+                    <td colspan="2">LKR <?php echo number_format($mo_loss); ?></td>
+                    <?php endif; ?>
                     <td>—</td>
                 </tr>
+                
+                <!-- Lean Total Row (Assembly only) -->
+                <?php if ($is_assembly && $has_lean_total): 
+                    $lt = $summary_rows['lean_total'];
+                ?>
+                <tr class="lean-total">
+                    <td style="text-align:left;font-weight:700;">Lean Total</td>
+                    <td colspan="<?php echo (count($component_list) * 2) + ($has_match_out ? 2 : 0); ?>" style="text-align:center;font-weight:700;">
+                        SAM: <?php echo number_format($lt['ttl_sam_pc'] ?? 0, 4); ?> | 
+                        Carder: <?php echo $lt['unit_carder'] ?? 0; ?> | 
+                        Day Ttl: <?php echo number_format($lt['day_total'] ?? 0, 0); ?>
+                    </td>
+                    <td>—</td>
+                </tr>
+                <?php endif; ?>
+                
+                <!-- Factory Grand Total Row (Assembly only) -->
+                <?php if ($is_assembly && $has_grand_total): 
+                    $gt = $summary_rows['grand_total'];
+                ?>
+                <tr class="grand-total">
+                    <td style="text-align:left;font-weight:700;">Factory Grand Total/Average</td>
+                    <td colspan="<?php echo (count($component_list) * 2) + ($has_match_out ? 2 : 0); ?>" style="text-align:center;font-weight:700;">
+                        SAM: <?php echo number_format($gt['ttl_sam_pc'] ?? 0, 4); ?> | 
+                        Carder: <?php echo $gt['unit_carder'] ?? 0; ?> | 
+                        Day Ttl: <?php echo number_format($gt['day_total'] ?? 0, 0); ?>
+                    </td>
+                    <td>—</td>
+                </tr>
+                <?php endif; ?>
             </tbody>
         </table>
 
@@ -1017,7 +1127,6 @@ $trend_dhu = array_map(function($item) { return $item['dhu']; }, $trend_data['dh
         <!-- CHARTS SECTION -->
         <!-- ============================================================ -->
         <div class="chart-grid">
-            <!-- Chart 1: Production - Hourly Progress -->
             <div class="chart-card">
                 <h4>📈 PRODUCTION - HOURLY PROGRESS</h4>
                 <div class="chart-wrapper">
@@ -1025,7 +1134,6 @@ $trend_dhu = array_map(function($item) { return $item['dhu']; }, $trend_data['dh
                 </div>
             </div>
 
-            <!-- Chart 2: DHU - Hourly Progress -->
             <div class="chart-card">
                 <h4>📉 D.H.U - HOURLY PROGRESS</h4>
                 <div class="chart-wrapper">
@@ -1033,7 +1141,6 @@ $trend_dhu = array_map(function($item) { return $item['dhu']; }, $trend_data['dh
                 </div>
             </div>
 
-            <!-- Chart 3: Month Production Trend -->
             <div class="chart-card chart-full">
                 <h4>📊 MONTH PRODUCE PCS - TREND LINE</h4>
                 <div class="chart-wrapper">
@@ -1041,7 +1148,6 @@ $trend_dhu = array_map(function($item) { return $item['dhu']; }, $trend_data['dh
                 </div>
             </div>
 
-            <!-- Chart 4: Month DHU Trend -->
             <div class="chart-card chart-full">
                 <h4>📉 MONTH D.H.U - TREND LINE</h4>
                 <div class="chart-wrapper">

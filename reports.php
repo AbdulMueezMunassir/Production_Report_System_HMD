@@ -1,5 +1,5 @@
 <?php
-// reports.php - WITH WORKING VIEW BUTTON
+// reports.php - WITH WORKING VIEW BUTTON AND FILTER PERSISTENCE
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
@@ -12,29 +12,40 @@ requireLogin();
 
 $conn = getDB();
 
-// Get date range - default to today if not set
-$from_date = isset($_GET['from']) && !empty($_GET['from']) ? $_GET['from'] : date('Y-m-d');
-$to_date = isset($_GET['to']) && !empty($_GET['to']) ? $_GET['to'] : date('Y-m-d');
-$division_filter = isset($_GET['division']) ? $_GET['division'] : 'all';
+// Start session only if not already started
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
-// Define the three main divisions with their display names
-$main_divisions = [
+// Get date range from session or default
+$from_date = isset($_GET['from']) && !empty($_GET['from']) ? $_GET['from'] : (isset($_SESSION['report_from']) ? $_SESSION['report_from'] : date('Y-m-d'));
+$to_date = isset($_GET['to']) && !empty($_GET['to']) ? $_GET['to'] : (isset($_SESSION['report_to']) ? $_SESSION['report_to'] : date('Y-m-d'));
+$division_filter = isset($_GET['division']) ? $_GET['division'] : (isset($_SESSION['report_division']) ? $_SESSION['report_division'] : 'all');
+
+// Save to session
+$_SESSION['report_from'] = $from_date;
+$_SESSION['report_to'] = $to_date;
+$_SESSION['report_division'] = $division_filter;
+
+// Define the divisions with their display names
+$all_divisions = [
     1 => 'Shirt',
     2 => 'Trouser',
+    3 => 'Coat',
     7 => 'Assembly'
 ];
 
-// Get ONLY the three main divisions
+// Get ONLY the main divisions
 $divisions = [];
 try {
-    $stmt = $conn->prepare("SELECT * FROM divisions WHERE id IN (1, 2, 7) ORDER BY FIELD(id, 1, 2, 7)");
+    $stmt = $conn->prepare("SELECT * FROM divisions WHERE id IN (1, 2, 3, 7) ORDER BY FIELD(id, 1, 2, 3, 7)");
     $stmt->execute();
     $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
     $divisions = [];
     foreach ($results as $div) {
-        if (isset($main_divisions[$div['id']])) {
-            $div['name'] = $main_divisions[$div['id']];
+        if (isset($all_divisions[$div['id']])) {
+            $div['name'] = $all_divisions[$div['id']];
             $divisions[] = $div;
         }
     }
@@ -42,28 +53,36 @@ try {
     $divisions = array();
 }
 
-// Build the query - ONLY for main three divisions
+// Build the query
 $sql = "SELECT 
             r.report_date, 
             d.name as division_name, 
-            AVG(r.acvd_eff) as avg_eff,
-            SUM(r.day_total) as total_prod,
-            COUNT(DISTINCT r.unit_id) as unit_count,
+            r.acvd_eff,
+            r.day_total,
+            r.unit_id,
+            r.ttl_sam_pc,
+            r.unit_smv,
+            r.unit_carder,
             r.devition_id,
-            GROUP_CONCAT(DISTINCT r.id) as report_ids
+            r.id as report_id,
+            (SELECT COUNT(*) FROM production_reports r2 
+             WHERE r2.report_date = r.report_date 
+             AND r2.devition_id = r.devition_id 
+             AND r2.unit_id NOT IN (996, 997, 998, 999)) as component_count
         FROM production_reports r 
         JOIN divisions d ON r.devition_id = d.id 
         WHERE r.report_date BETWEEN ? AND ?
-        AND d.id IN (1, 2, 7)
-        AND r.day_total > 0";
+        AND d.id IN (1, 2, 3, 7)";
+
 $params = array($from_date, $to_date);
 
 if ($division_filter !== 'all' && !empty($division_filter)) {
     $sql .= " AND d.id = ?";
     $params[] = (int)$division_filter;
 }
-$sql .= " GROUP BY r.devition_id, r.report_date
-          ORDER BY r.report_date DESC, d.name ASC";
+
+$sql .= " ORDER BY r.report_date DESC, d.name ASC, 
+          FIELD(r.unit_id, 996, 997, 998, 999, 0) DESC";
 
 try {
     $stmt = $conn->prepare($sql);
@@ -75,17 +94,73 @@ try {
     $reports = array();
 }
 
+// Group reports by date and division
+$grouped_reports = [];
+
+foreach ($reports as $report) {
+    $key = $report['report_date'] . '_' . $report['devition_id'];
+    
+    if (!isset($grouped_reports[$key])) {
+        $grouped_reports[$key] = [
+            'date' => $report['report_date'],
+            'division_id' => $report['devition_id'],
+            'division_name' => $report['division_name'],
+            'components' => [],
+            'summary' => [
+                'match_out' => null,
+                'dhu' => null,
+                'lean_total' => null,
+                'grand_total' => null
+            ],
+            'total_pcs' => 0,
+            'total_eff' => 0,
+            'eff_count' => 0,
+            'component_count' => $report['component_count'] ?? 0
+        ];
+    }
+    
+    // Check if this is a summary row
+    $unit_id = $report['unit_id'] ?? 0;
+    if ($unit_id == 999) {
+        $grouped_reports[$key]['summary']['match_out'] = $report;
+    } elseif ($unit_id == 998) {
+        $grouped_reports[$key]['summary']['dhu'] = $report;
+    } elseif ($unit_id == 997) {
+        $grouped_reports[$key]['summary']['lean_total'] = $report;
+    } elseif ($unit_id == 996) {
+        $grouped_reports[$key]['summary']['grand_total'] = $report;
+    } else {
+        $grouped_reports[$key]['components'][] = $report;
+        if ($report['day_total'] > 0) {
+            $grouped_reports[$key]['total_pcs'] += $report['day_total'];
+            if ($report['acvd_eff'] > 0) {
+                $grouped_reports[$key]['total_eff'] += $report['acvd_eff'] * 100;
+                $grouped_reports[$key]['eff_count']++;
+            }
+        }
+    }
+}
+
+// Calculate summary for each group
+foreach ($grouped_reports as $key => &$group) {
+    $group['avg_eff'] = $group['eff_count'] > 0 ? round($group['total_eff'] / $group['eff_count'], 1) : 0;
+    $group['is_assembly'] = ($group['division_id'] == 7);
+}
+
 // Calculate stats
-$total_reports = count($reports);
+$total_reports = count($grouped_reports);
 $avg_eff = 0;
 $total_prod = 0;
-foreach ($reports as $r) {
-    $avg_eff += $r['avg_eff'] ?? 0;
-    $total_prod += $r['total_prod'] ?? 0;
+foreach ($grouped_reports as $r) {
+    $avg_eff += $r['avg_eff'];
+    $total_prod += $r['total_pcs'];
 }
-$avg_eff = $total_reports > 0 ? round(($avg_eff / $total_reports) * 100, 1) : 0;
+$avg_eff = $total_reports > 0 ? round($avg_eff / $total_reports, 1) : 0;
 
 $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
+
+// Clear view report session filter flag
+unset($_SESSION['from_view_report']);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -113,6 +188,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             --good: #28a745;
             --warning: #ffc107;
             --amber: #f57c00;
+            --dhu-color: #e74c3c;
         }
         body {
             font-family: 'Inter', sans-serif;
@@ -325,25 +401,27 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         .table-shell table {
             width: 100%;
             border-collapse: collapse;
-            font-size: 14px;
+            font-size: 13px;
         }
         .table-shell th {
             background: rgba(255,255,255,0.3);
-            padding: 12px 16px;
+            padding: 10px 12px;
             text-align: left;
             font-weight: 700;
             color: var(--steel);
             border-bottom: 1px solid var(--glass-border);
-            font-size: 13px;
+            font-size: 12px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
         .table-shell td {
-            padding: 10px 16px;
+            padding: 8px 12px;
             border-bottom: 1px solid rgba(255,255,255,0.1);
             font-weight: 500;
+            font-size: 13px;
         }
         .table-shell tr:hover { background: rgba(255,255,255,0.2); }
+        
         .eff-good { color: var(--good); font-weight: 700; }
         .eff-bad { color: var(--bad); font-weight: 700; }
         .eff-avg { color: var(--warning); font-weight: 700; }
@@ -407,6 +485,28 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             flex-wrap: wrap;
         }
         
+        .component-count {
+            font-size: 11px;
+            color: var(--steel);
+            font-weight: 500;
+        }
+        .summary-badges {
+            display: flex;
+            gap: 4px;
+            flex-wrap: wrap;
+        }
+        .summary-badges .badge-sm {
+            font-size: 9px;
+            padding: 1px 6px;
+            border-radius: 3px;
+            color: #fff;
+            font-weight: 600;
+        }
+        .badge-sm.match-out { background: #6c757d; }
+        .badge-sm.dhu { background: var(--dhu-color); }
+        .badge-sm.lean { background: #17a2b8; }
+        .badge-sm.grand { background: #6f42c1; }
+        
         @media (max-width: 768px) {
             .topbar { padding: 10px 16px; flex-direction: column; align-items: stretch; gap: 8px; }
             .topnav { justify-content: center; }
@@ -420,6 +520,9 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             .topnav a { padding: 6px 12px; font-size: 13px; }
             .weather-bar { padding: 8px 16px; justify-content: center; flex-wrap: wrap; }
             .table-shell { overflow-x: auto; }
+            .table-shell table { font-size: 12px; }
+            .table-shell th,
+            .table-shell td { padding: 6px 8px; }
         }
         @media (max-width: 480px) { .kpi-row { grid-template-columns: 1fr; } }
     </style>
@@ -468,18 +571,18 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         </div>
 
         <!-- Filter Row -->
-        <div class="filter-row">
+        <form class="filter-row" method="GET" action="">
             <div class="field">
                 <label>From</label>
-                <input id="rep-from" type="date" value="<?php echo $from_date; ?>">
+                <input id="rep-from" name="from" type="date" value="<?php echo $from_date; ?>">
             </div>
             <div class="field">
                 <label>To</label>
-                <input id="rep-to" type="date" value="<?php echo $to_date; ?>">
+                <input id="rep-to" name="to" type="date" value="<?php echo $to_date; ?>">
             </div>
             <div class="field">
                 <label>Devition</label>
-                <select id="rep-division">
+                <select id="rep-division" name="division">
                     <option value="all" <?php echo $division_filter === 'all' ? 'selected' : ''; ?>>All devitions</option>
                     <?php if (!empty($divisions)): ?>
                     <?php foreach ($divisions as $div): ?>
@@ -491,15 +594,15 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                 </select>
             </div>
             <div class="filter-actions">
-                <button class="btn-apply" onclick="applyFilters()">Apply</button>
-                <button class="btn-outline" onclick="viewAllRecords()">View All</button>
-                <button class="btn-outline" onclick="viewToday()">Today</button>
+                <button type="submit" class="btn-apply">Apply</button>
+                <button type="button" class="btn-outline" onclick="viewAllRecords()">View All</button>
+                <button type="button" class="btn-outline" onclick="viewToday()">Today</button>
             </div>
-        </div>
+        </form>
 
         <?php if ($total_reports > 0): ?>
         <div class="debug-success">
-            ✅ Found <strong><?php echo $total_reports; ?></strong> reports matching your filter.
+            ✅ Found <strong><?php echo $total_reports; ?></strong> report groups matching your filter.
         </div>
         <?php endif; ?>
 
@@ -516,29 +619,65 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                     <tr>
                         <th style="text-align:left;">Date</th>
                         <th style="text-align:left;">Devition</th>
+                        <th>Components</th>
                         <th>Achieved Eff</th>
+                        <th>Summary Rows</th>
                         <th style="text-align:center;">Action</th>
                     </tr>
                 </thead>
                 <tbody id="rep-body">
-                    <?php if (empty($reports)): ?>
-                    <tr><td colspan="4" class="no-data">
+                    <?php if (empty($grouped_reports)): ?>
+                    <tr><td colspan="6" class="no-data">
                         No reports found. Please add data in a Devition and click "Save All".
                     </td></tr>
                     <?php else: ?>
-                    <?php foreach ($reports as $report): 
-                        $eff = ($report['avg_eff'] ?? 0) * 100;
+                    <?php foreach ($grouped_reports as $group): 
+                        $eff = $group['avg_eff'];
                         $eff_class = $eff >= 70 ? 'eff-good' : ($eff >= 50 ? 'eff-avg' : 'eff-bad');
-                        $division_name = htmlspecialchars($report['division_name'] ?? 'Unknown');
-                        if ($division_name == 'Shirt Assembly') $division_name = 'Assembly';
+                        $division_name = htmlspecialchars($group['division_name']);
                         
-                        // Build view URL with parameters - using division ID and date
-                        $view_url = 'view_report.php?date=' . $report['report_date'] . '&division=' . $report['devition_id'];
+                        // Build view URL with current filters
+                        $view_url = 'view_report.php?date=' . $group['date'] . '&division=' . $group['division_id'] . '&from=' . $from_date . '&to=' . $to_date . '&division_filter=' . $division_filter;
+                        
+                        // Count summary rows present
+                        $summary_count = 0;
+                        $summary_types = [];
+                        if ($group['summary']['match_out']) { $summary_count++; $summary_types[] = 'Match Out'; }
+                        if ($group['summary']['dhu']) { $summary_count++; $summary_types[] = 'DHU'; }
+                        if ($group['summary']['lean_total']) { $summary_count++; $summary_types[] = 'Lean Total'; }
+                        if ($group['summary']['grand_total']) { $summary_count++; $summary_types[] = 'Grand Total'; }
+                        
+                        $component_count = count($group['components']);
                     ?>
                     <tr>
-                        <td><?php echo date('Y-m-d', strtotime($report['report_date'])); ?></td>
+                        <td><?php echo date('Y-m-d', strtotime($group['date'])); ?></td>
                         <td><?php echo $division_name; ?></td>
+                        <td>
+                            <span class="component-count"><?php echo $component_count; ?> components</span>
+                            <?php if ($summary_count > 0): ?>
+                            <span style="color:var(--steel);font-size:11px;"> + <?php echo $summary_count; ?> summary</span>
+                            <?php endif; ?>
+                        </td>
                         <td class="<?php echo $eff_class; ?>"><?php echo number_format($eff, 1); ?>%</td>
+                        <td>
+                            <div class="summary-badges">
+                                <?php if ($group['summary']['match_out']): ?>
+                                <span class="badge-sm match-out">MO</span>
+                                <?php endif; ?>
+                                <?php if ($group['summary']['dhu']): ?>
+                                <span class="badge-sm dhu">DHU</span>
+                                <?php endif; ?>
+                                <?php if ($group['summary']['lean_total']): ?>
+                                <span class="badge-sm lean">LT</span>
+                                <?php endif; ?>
+                                <?php if ($group['summary']['grand_total']): ?>
+                                <span class="badge-sm grand">GT</span>
+                                <?php endif; ?>
+                                <?php if ($summary_count == 0): ?>
+                                <span style="color:var(--steel);font-size:11px;">—</span>
+                                <?php endif; ?>
+                            </div>
+                        </td>
                         <td style="text-align:center;">
                             <a href="<?php echo $view_url; ?>" class="btn-view-action">View</a>
                         </td>
@@ -550,7 +689,14 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         </div>
     </div>
 
-    
+    <div class="weather-bar">
+        <span class="weather-icon">⛅</span>
+        <span class="temp">29°C</span>
+        <span>Partly sunny</span>
+        <span>|</span>
+        <span><?php echo date('g:i A'); ?></span>
+        <span><?php echo date('M d, Y'); ?></span>
+    </div>
 
     <script>
         function updateClock() {
@@ -564,47 +710,21 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         updateClock();
         setInterval(updateClock, 60000);
 
-        function applyFilters() {
-            var from = document.getElementById('rep-from').value;
-            var to = document.getElementById('rep-to').value;
-            var division = document.getElementById('rep-division').value;
-            window.location.href = 'reports.php?from=' + from + '&to=' + to + '&division=' + division;
-        }
-
         function viewAllRecords() {
             var today = new Date().toISOString().split('T')[0];
-            var from = '2020-01-01';
-            window.location.href = 'reports.php?from=' + from + '&to=' + today + '&division=all';
+            document.getElementById('rep-from').value = '2020-01-01';
+            document.getElementById('rep-to').value = today;
+            document.getElementById('rep-division').value = 'all';
+            document.querySelector('.filter-row').submit();
         }
 
         function viewToday() {
             var today = new Date().toISOString().split('T')[0];
-            window.location.href = 'reports.php?from=' + today + '&to=' + today + '&division=all';
+            document.getElementById('rep-from').value = today;
+            document.getElementById('rep-to').value = today;
+            document.getElementById('rep-division').value = 'all';
+            document.querySelector('.filter-row').submit();
         }
-
-        // Enter key to apply filters
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter') {
-                var active = document.activeElement;
-                if (active && (active.id === 'rep-from' || active.id === 'rep-to' || active.id === 'rep-division')) {
-                    applyFilters();
-                }
-            }
-        });
-
-        // Set default date to today if empty
-        document.addEventListener('DOMContentLoaded', function() {
-            var today = new Date().toISOString().split('T')[0];
-            var fromInput = document.getElementById('rep-from');
-            var toInput = document.getElementById('rep-to');
-            
-            if (!fromInput.value) {
-                fromInput.value = today;
-            }
-            if (!toInput.value) {
-                toInput.value = today;
-            }
-        });
     </script>
 </body>
 </html>

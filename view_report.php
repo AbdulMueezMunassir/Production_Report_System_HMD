@@ -1,5 +1,5 @@
 <?php
-// view_report.php - View Single Report
+// view_report.php - View Single Report with Back to Filters
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/functions.php';
@@ -11,6 +11,11 @@ $conn = getDB();
 // Get parameters from URL
 $date = isset($_GET['date']) ? $_GET['date'] : date('Y-m-d');
 $division_id = isset($_GET['division']) ? (int)$_GET['division'] : 0;
+
+// Get filter parameters for back button
+$from_date = isset($_GET['from']) ? $_GET['from'] : date('Y-m-d');
+$to_date = isset($_GET['to']) ? $_GET['to'] : date('Y-m-d');
+$division_filter = isset($_GET['division_filter']) ? $_GET['division_filter'] : 'all';
 
 // If no division ID, try to get from report ID
 if ($division_id == 0 && isset($_GET['id'])) {
@@ -37,23 +42,58 @@ if (!$division) {
 
 $division_name = $division['name'];
 if ($division_name == 'Shirt Assembly') $division_name = 'Assembly';
+$is_assembly_division = ($division['type'] === 'assembly');
 
 // Get work hours from URL or default to 10
 $work_hours = isset($_GET['hours']) ? (int)$_GET['hours'] : 10;
 $work_hours = max(1, min(11, $work_hours));
 
+// ============================================================
+// GET ALL DATA INCLUDING SUMMARY ROWS
+// ============================================================
+
 // Get all components for this division
 $components = getComponents($conn, $division_id);
 $component_data = [];
-$is_assembly_division = ($division['type'] === 'assembly');
+$summary_rows = [];
 
-// Process each component
+// Get all reports for this date and division
+$stmt = $conn->prepare("SELECT * FROM production_reports WHERE devition_id = ? AND report_date = ? ORDER BY unit_id");
+$stmt->execute([$division_id, $date]);
+$all_reports = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Separate regular components from summary rows
+foreach ($all_reports as $report) {
+    $unit_id = $report['unit_id'] ?? 0;
+    
+    // Check if this is a summary row
+    if ($unit_id == 999) {
+        $summary_rows['match_out'] = $report;
+    } elseif ($unit_id == 998) {
+        $summary_rows['dhu'] = $report;
+    } elseif ($unit_id == 997) {
+        $summary_rows['lean_total'] = $report;
+    } elseif ($unit_id == 996) {
+        $summary_rows['grand_total'] = $report;
+    } else {
+        $component_data[$unit_id] = $report;
+    }
+}
+
+// Process each component with Excel formulas if data exists
 foreach ($components as $comp) {
     if ($comp['is_match_out']) continue;
-    
     $comp_id = $comp['id'];
-    $data = getReportData($conn, $division_id, $comp_id, $date);
     
+    // If data exists in database, use it
+    if (isset($component_data[$comp_id])) {
+        $data = $component_data[$comp_id];
+    } else {
+        // Get empty data structure
+        $data = getReportData($conn, $division_id, $comp_id, $date);
+    }
+    
+    // Ensure all fields exist
     $data['ttl_sam_pc'] = (float)($data['ttl_sam_pc'] ?? 0);
     $data['unit_smv'] = (float)($data['unit_smv'] ?? 0);
     $data['unit_carder'] = (int)($data['unit_carder'] ?? 0);
@@ -72,53 +112,31 @@ foreach ($components as $comp) {
         $data["hour_$h"] = (float)($data["hour_$h"] ?? 0);
     }
     
-    // Calculate if data exists
-    if ($is_assembly_division) {
-        if ($data['unit_smv'] > 0 && $data['unit_carder'] > 0) {
-            $data['day_forecast'] = ($data['unit_carder'] * 600 / $data['unit_smv']) * 0.80;
+    // Calculate using exact Excel formulas if no data exists
+    if ($data['ttl_sam_pc'] == 0 && $data['unit_smv'] == 0) {
+        if ($is_assembly_division) {
+            if ($data['unit_smv'] > 0 && $data['unit_carder'] > 0) {
+                $data['day_forecast'] = ($data['unit_carder'] * 600 / $data['unit_smv']) * 0.80;
+            }
+            $data['available_minutes'] = $data['unit_carder'] * $data['plan_hours'] * 60;
+            $data['plan_minutes'] = $data['day_forecast'] * $data['unit_smv'];
+            $data['plan_eff'] = ($data['available_minutes'] > 0) ? ($data['plan_minutes'] / $data['available_minutes']) : 0;
+            $data['target_100'] = ($data['unit_smv'] > 0) ? ($data['unit_carder'] / $data['unit_smv']) * 60 : 0;
+        } else {
+            if ($data['unit_smv'] > 0 && $data['unit_carder'] > 0) {
+                $data['day_forecast'] = ($data['unit_carder'] * 600 / $data['unit_smv']) * 0.90;
+            }
+            $data['available_minutes'] = $data['unit_carder'] * $data['plan_hours'] * 60;
+            $data['plan_minutes'] = $data['day_forecast'] * $data['unit_smv'];
+            $data['plan_eff'] = ($data['available_minutes'] > 0) ? ($data['plan_minutes'] / $data['available_minutes']) : 0;
+            $data['target_100'] = ($data['unit_smv'] > 0) ? ($data['unit_carder'] / $data['unit_smv']) * 60 : 0;
         }
-        $data['available_minutes'] = $data['unit_carder'] * $data['plan_hours'] * 60;
-        $data['plan_minutes'] = $data['day_forecast'] * $data['unit_smv'];
-        $data['plan_eff'] = ($data['available_minutes'] > 0) ? ($data['plan_minutes'] / $data['available_minutes']) : 0;
-        $data['target_100'] = ($data['unit_smv'] > 0) ? ($data['unit_carder'] / $data['unit_smv']) * 60 : 0;
-        
-        $day_total = 0;
-        for ($h = 1; $h <= $work_hours; $h++) {
-            $day_total += $data["hour_$h"];
-        }
-        $data['day_total'] = $day_total;
-        $data['ern_minutes'] = $day_total * $data['ttl_sam_pc'];
-        
-        if ($data['available_minutes'] > 0 && $data['worked_hours'] > 0) {
-            $data['acvd_eff'] = ($data['ern_minutes'] / $data['available_minutes']) * ($data['plan_hours'] / $data['worked_hours']);
-        }
-    } else {
-        if ($data['unit_smv'] > 0 && $data['unit_carder'] > 0) {
-            $data['day_forecast'] = ($data['unit_carder'] * 600 / $data['unit_smv']) * 0.90;
-        }
-        $data['available_minutes'] = $data['unit_carder'] * $data['plan_hours'] * 60;
-        $data['plan_minutes'] = $data['day_forecast'] * $data['unit_smv'];
-        $data['plan_eff'] = ($data['available_minutes'] > 0) ? ($data['plan_minutes'] / $data['available_minutes']) : 0;
-        $data['target_100'] = ($data['unit_smv'] > 0) ? ($data['unit_carder'] / $data['unit_smv']) * 60 : 0;
-        
-        $day_total = 0;
-        for ($h = 1; $h <= $work_hours; $h++) {
-            $day_total += $data["hour_$h"];
-        }
-        $data['day_total'] = $day_total;
-        $data['ern_minutes'] = $day_total * $data['unit_smv'];
-        
-        $denominator = 1;
-        if ($data['available_minutes'] > 0 && $data['plan_hours'] > 0) {
-            $denominator = ($data['available_minutes'] / $data['plan_hours']) * $data['worked_hours'];
-        }
-        $data['acvd_eff'] = ($denominator > 0) ? ($data['ern_minutes'] / $denominator) : 0;
     }
     
     $component_data[$comp_id] = $data;
 }
 
-// Calculate totals
+// Calculate totals for regular components
 $total_day_ttl = 0;
 $total_ern_min = 0;
 $total_eff = 0;
@@ -162,6 +180,10 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             --bad: #dc3545;
             --good: #28a745;
             --warning: #ffc107;
+            --dhu-red: #dc3545;
+            --dhu-bg: rgba(220, 53, 69, 0.12);
+            --grand-total-bg: rgba(33, 115, 70, 0.15);
+            --lean-bg: rgba(33, 115, 70, 0.08);
         }
         body {
             font-family: 'Inter', sans-serif;
@@ -271,6 +293,23 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         }
         .report-header .meta span { color: var(--steel); font-size: 14px; font-weight: 500; }
         .report-header .meta strong { color: var(--text-dark); font-weight: 700; }
+        .report-header .summary-badges {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+        .report-header .summary-badges .badge {
+            padding: 2px 12px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 700;
+            color: #fff;
+        }
+        .badge-match-out { background: #6c757d; }
+        .badge-dhu { background: #dc3545; }
+        .badge-lean { background: #17a2b8; }
+        .badge-grand { background: #6f42c1; }
         
         .table-container {
             background: var(--glass-bg);
@@ -300,17 +339,17 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         .excel-table {
             width: 100%;
             border-collapse: collapse;
-            font-size: 12px;
+            font-size: 11px;
             min-width: 1400px;
         }
         .excel-table th {
             background: rgba(255,255,255,0.3);
             border: 1px solid var(--glass-border);
-            padding: 8px 6px;
+            padding: 6px 4px;
             text-align: center;
             font-weight: 700;
             color: var(--text-dark);
-            font-size: 10px;
+            font-size: 9px;
             white-space: nowrap;
             position: sticky;
             top: 0;
@@ -318,16 +357,32 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         }
         .excel-table td {
             border: 1px solid var(--glass-border);
-            padding: 6px 4px;
+            padding: 4px 3px;
             text-align: center;
             white-space: nowrap;
             font-size: 11px;
             font-weight: 500;
         }
         .excel-table tr:hover { background: rgba(255,255,255,0.2); }
-        .excel-table .calculated { background: rgba(255,255,255,0.1); color: var(--text-dark); }
+        .excel-table .match-out-row { background: rgba(33,115,70,0.08); font-weight: 600; }
+        .excel-table .match-out-row td { background: rgba(33,115,70,0.08); }
+        .excel-table .dhu-row { background: var(--dhu-bg); color: var(--dhu-red); font-weight: 700; }
+        .excel-table .dhu-row td { background: var(--dhu-bg); color: var(--dhu-red); border-color: rgba(220, 53, 69, 0.2); }
         .excel-table .total-row { background: rgba(33, 150, 243, 0.1); font-weight: 700; }
         .excel-table .total-row td { background: rgba(33, 150, 243, 0.1); }
+        .excel-table .lean-total-row { background: var(--lean-bg); font-weight: 700; }
+        .excel-table .lean-total-row td { background: var(--lean-bg); }
+        .excel-table .grand-total-row { background: var(--grand-total-bg); color: #fff; font-weight: 800; }
+        .excel-table .grand-total-row td { background: var(--grand-total-bg); color: #fff; border-color: rgba(33,115,70,0.3); }
+        .excel-table .calculated { background: rgba(255,255,255,0.1); }
+        .excel-table .section-divider td {
+            background: rgba(33, 115, 70, 0.1) !important;
+            font-weight: 700 !important;
+            color: var(--text-dark) !important;
+            padding: 8px 4px !important;
+            border-top: 2px solid var(--primary) !important;
+            border-bottom: 2px solid var(--primary) !important;
+        }
         
         .back-button {
             display: inline-flex;
@@ -368,6 +423,14 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         }
         .weather-bar .temp { font-weight: 700; color: var(--text-dark); }
         .weather-bar .weather-icon { font-size: 18px; }
+        
+        .no-data {
+            text-align: center;
+            padding: 30px;
+            color: var(--steel);
+            font-size: 14px;
+            font-weight: 500;
+        }
         
         @media (max-width: 768px) {
             .topbar { padding: 10px 16px; flex-direction: column; align-items: stretch; gap: 8px; }
@@ -414,19 +477,39 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
 
     <div class="container">
         <div class="report-header">
-            <h2>📋 <?php echo htmlspecialchars($division_name); ?> - Production Report</h2>
+            <h2>📋 <?php echo htmlspecialchars($division_name); ?> - Detail Report</h2>
             <div class="meta">
                 <span><strong>Date:</strong> <?php echo date('Y-m-d', strtotime($date)); ?></span>
                 <span><strong>Working Hours:</strong> <?php echo $work_hours; ?> hrs</span>
-                <span><strong>Total Components:</strong> <?php echo $row_idx; ?></span>
+                <span><strong>Components:</strong> <?php echo $row_idx; ?></span>
                 <span><strong>Average Efficiency:</strong> <span style="color:var(--primary); font-weight:700;"><?php echo $avg_eff; ?>%</span></span>
                 <span><strong>Total Production:</strong> <?php echo number_format($total_day_ttl, 0); ?></span>
+            </div>
+            <!-- Summary Badges -->
+            <div class="summary-badges">
+                <?php if (isset($summary_rows['match_out']) && $summary_rows['match_out']['unit_smv'] > 0): ?>
+                <span class="badge badge-match-out">✅ Match Out</span>
+                <?php endif; ?>
+                <?php if (isset($summary_rows['dhu']) && $summary_rows['dhu']['day_total'] > 0): ?>
+                <span class="badge badge-dhu">✅ DHU</span>
+                <?php endif; ?>
+                <?php if (isset($summary_rows['lean_total']) && $summary_rows['lean_total']['ttl_sam_pc'] > 0): ?>
+                <span class="badge badge-lean">✅ Lean Total</span>
+                <?php endif; ?>
+                <?php if (isset($summary_rows['grand_total']) && $summary_rows['grand_total']['ttl_sam_pc'] > 0): ?>
+                <span class="badge badge-grand">✅ Factory Grand Total</span>
+                <?php endif; ?>
+                <?php if (empty($summary_rows) || 
+                    (!isset($summary_rows['match_out']) && !isset($summary_rows['dhu']) && 
+                     !isset($summary_rows['lean_total']) && !isset($summary_rows['grand_total']))): ?>
+                <span style="color:var(--steel);font-size:12px;">No summary data available</span>
+                <?php endif; ?>
             </div>
         </div>
 
         <div class="table-container">
             <div class="table-title">
-                <span>📊 <?php echo htmlspecialchars($division_name); ?> - Detail Report</span>
+                <span>📊 <?php echo htmlspecialchars($division_name); ?> - Production Report</span>
                 <span class="badge-info">Work Hours: <?php echo $work_hours; ?> hrs</span>
             </div>
             
@@ -436,9 +519,9 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                         <th style="min-width:60px;">DEVITION</th>
                         <th style="min-width:55px;">Unit</th>
                         <th style="min-width:65px;">TTl SAM/Pc</th>
-                        <th style="min-width:65px;">Unit SMV</th>
+                        <th style="min-width:65px;"><?php echo $is_assembly_division ? 'Section SAM/Pc' : 'Unit SMV'; ?></th>
                         <th style="min-width:65px;">Day Forecast</th>
-                        <th style="min-width:65px;">Unit Carder</th>
+                        <th style="min-width:65px;"><?php echo $is_assembly_division ? 'Assemble Carder' : 'Unit Carder'; ?></th>
                         <th style="min-width:65px;">Plan Hours</th>
                         <th style="min-width:65px;">Worked Hours</th>
                         <th style="min-width:70px;">Available Minutes</th>
@@ -454,16 +537,22 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                     </tr>
                 </thead>
                 <tbody>
-                    <?php if (empty($components)): ?>
-                    <tr><td colspan="<?php echo 12 + $work_hours + 3; ?>" style="padding:30px; color:var(--steel); text-align:center; font-weight:500;">No data found for this date.</td></tr>
+                    <?php if (empty($components) && empty($summary_rows)): ?>
+                    <tr><td colspan="<?php echo 12 + $work_hours + 3; ?>" class="no-data">No data found for this date.</td></tr>
                     <?php else: ?>
                     
-                    <?php foreach ($components as $comp):
+                    <!-- ============================================================ -->
+                    <!-- REGULAR COMPONENTS -->
+                    <!-- ============================================================ -->
+                    <?php 
+                    $component_displayed = 0;
+                    foreach ($components as $comp):
                         if ($comp['is_match_out']) continue;
                         $data = $component_data[$comp['id']] ?? [];
                         $day_total = $data['day_total'] ?? 0;
                         $ern_minutes = $data['ern_minutes'] ?? 0;
                         $acvd_eff = $data['acvd_eff'] ?? 0;
+                        $component_displayed++;
                     ?>
                     <tr>
                         <td><?php echo htmlspecialchars($division_name); ?></td>
@@ -489,7 +578,66 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                     </tr>
                     <?php endforeach; ?>
                     
-                    <!-- Total Row -->
+                    <!-- ============================================================ -->
+                    <!-- MATCH OUT ROW (Shirt/Trouser - unit_id: 999) -->
+                    <!-- ============================================================ -->
+                    <?php if (!$is_assembly_division && isset($summary_rows['match_out']) && $summary_rows['match_out']['unit_smv'] > 0): 
+                        $mo = $summary_rows['match_out'];
+                        $mo_total = 0;
+                        for ($h = 1; $h <= $work_hours; $h++) {
+                            $mo_total += $mo["hour_$h"] ?? 0;
+                        }
+                    ?>
+                    <tr class="match-out-row">
+                        <td colspan="2" style="font-weight:700;">Match Out</td>
+                        <td style="font-weight:700;"><?php echo number_format($mo['ttl_sam_pc'] ?? 0, 4); ?></td>
+                        <td style="font-weight:700;"><?php echo number_format($mo['unit_smv'] ?? 0, 2); ?></td>
+                        <td style="font-weight:700;"><?php echo number_format($mo['day_forecast'] ?? 0, 0); ?></td>
+                        <td style="font-weight:700;"><?php echo $mo['unit_carder'] ?? 0; ?></td>
+                        <td style="font-weight:700;"><?php echo number_format($mo['plan_hours'] ?? 0, 1); ?></td>
+                        <td style="font-weight:700;"><?php echo number_format($mo['worked_hours'] ?? 0, 1); ?></td>
+                        <td class="calculated"><?php echo number_format($mo['available_minutes'] ?? 0, 0); ?></td>
+                        <td class="calculated"><?php echo number_format($mo['plan_minutes'] ?? 0, 0); ?></td>
+                        <td class="calculated"><?php echo number_format(($mo['plan_eff'] ?? 0) * 100, 1); ?>%</td>
+                        <td class="calculated"><?php echo number_format($mo['target_100'] ?? 0, 0); ?></td>
+                        <?php for ($h = 1; $h <= $work_hours; $h++): ?>
+                        <td><?php echo number_format($mo["hour_$h"] ?? 0, 0); ?></td>
+                        <?php endfor; ?>
+                        <td style="font-weight:700;"><?php echo number_format($mo['day_total'] ?? 0, 0); ?></td>
+                        <td style="font-weight:700;"><?php echo number_format($mo['ern_minutes'] ?? 0, 1); ?></td>
+                        <td style="font-weight:700; color:var(--primary);">
+                            <?php echo number_format(($mo['acvd_eff'] ?? 0) * 100, 1); ?>%
+                        </td>
+                    </tr>
+                    <?php endif; ?>
+                    
+                    <!-- ============================================================ -->
+                    <!-- DHU ROW (Shirt/Trouser - unit_id: 998) -->
+                    <!-- ============================================================ -->
+                    <?php if (!$is_assembly_division && isset($summary_rows['dhu']) && $summary_rows['dhu']['day_total'] > 0): 
+                        $dhu = $summary_rows['dhu'];
+                        $dhu_avg = 0;
+                        for ($h = 1; $h <= $work_hours; $h++) {
+                            $dhu_avg += $dhu["hour_$h"] ?? 0;
+                        }
+                        $dhu_avg = $work_hours > 0 ? round($dhu_avg / $work_hours, 1) : 0;
+                    ?>
+                    <tr class="dhu-row">
+                        <td colspan="<?php echo 11 + $work_hours; ?>" style="text-align:right; padding-right:12px; font-weight:700; color:var(--dhu-red);">
+                            DHU %
+                        </td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700; font-size:14px;">
+                            <?php echo number_format($dhu_avg, 1); ?>%
+                        </td>
+                    </tr>
+                    <?php endif; ?>
+                    
+                    <!-- ============================================================ -->
+                    <!-- TOTAL ROW (Non-Assembly) -->
+                    <!-- ============================================================ -->
+                    <?php if (!$is_assembly_division && $component_displayed > 0): ?>
                     <tr class="total-row">
                         <td colspan="<?php echo 11 + $work_hours; ?>" style="text-align:right; padding-right:12px; font-weight:700;">
                             Total / <?php echo htmlspecialchars($division_name); ?>:
@@ -497,9 +645,85 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                         <td style="font-weight:700;"><?php echo number_format($total_day_ttl, 0); ?></td>
                         <td style="font-weight:700;"><?php echo number_format($total_ern_min, 1); ?></td>
                         <td style="font-weight:700; color:var(--primary);">
-                            <?php echo $avg_eff; ?>%
+                            <?php echo number_format($avg_eff, 1); ?>%
                         </td>
                     </tr>
+                    <?php endif; ?>
+                    
+                    <!-- ============================================================ -->
+                    <!-- LEAN TOTAL ROW (Assembly - unit_id: 997) -->
+                    <!-- ============================================================ -->
+                    <?php if ($is_assembly_division && isset($summary_rows['lean_total']) && $summary_rows['lean_total']['ttl_sam_pc'] > 0): 
+                        $lt = $summary_rows['lean_total'];
+                    ?>
+                    <tr class="lean-total-row">
+                        <td colspan="2" style="font-weight:700;">Lean Total</td>
+                        <td style="font-weight:700;"><?php echo number_format($lt['ttl_sam_pc'] ?? 0, 4); ?></td>
+                        <td style="font-weight:700;"><?php echo number_format($lt['unit_smv'] ?? 0, 3); ?></td>
+                        <td style="font-weight:700;"><?php echo number_format($lt['day_forecast'] ?? 0, 0); ?></td>
+                        <td style="font-weight:700;"><?php echo number_format($lt['unit_carder'] ?? 0, 0); ?></td>
+                        <td style="font-weight:700;"><?php echo number_format($lt['plan_hours'] ?? 0, 1); ?></td>
+                        <td style="font-weight:700;"><?php echo number_format($lt['worked_hours'] ?? 0, 1); ?></td>
+                        <td style="font-weight:700;"><?php echo number_format($lt['available_minutes'] ?? 0, 0); ?></td>
+                        <td style="font-weight:700;"><?php echo number_format($lt['plan_minutes'] ?? 0, 2); ?></td>
+                        <td style="font-weight:700;"><?php echo number_format(($lt['plan_eff'] ?? 0) * 100, 1); ?>%</td>
+                        <td style="font-weight:700;"><?php echo number_format($lt['target_100'] ?? 0, 0); ?></td>
+                        <?php for ($h = 1; $h <= $work_hours; $h++): ?>
+                        <td style="font-weight:700;"><?php echo number_format($lt["hour_$h"] ?? 0, 0); ?></td>
+                        <?php endfor; ?>
+                        <td style="font-weight:700;"><?php echo number_format($lt['day_total'] ?? 0, 0); ?></td>
+                        <td style="font-weight:700;"><?php echo number_format($lt['ern_minutes'] ?? 0, 1); ?></td>
+                        <td style="font-weight:700; color:var(--primary);"><?php echo number_format(($lt['acvd_eff'] ?? 0) * 100, 1); ?>%</td>
+                    </tr>
+                    
+                    <!-- Lean Total DHU Row -->
+                    <tr class="dhu-row">
+                        <td colspan="<?php echo 11 + $work_hours; ?>" style="text-align:right; padding-right:12px; font-weight:700; color:var(--dhu-red);">
+                            Lean Total DHU %
+                        </td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700; font-size:14px;">
+                            <?php 
+                            $lt_dhu = 0;
+                            if (isset($summary_rows['lean_total']) && $summary_rows['lean_total']['day_total'] > 0) {
+                                $lt_dhu_vals = 0;
+                                for ($h = 1; $h <= $work_hours; $h++) {
+                                    $lt_dhu_vals += $summary_rows['lean_total']["hour_$h"] ?? 0;
+                                }
+                                $lt_dhu = $work_hours > 0 ? round($lt_dhu_vals / $work_hours, 1) : 0;
+                            }
+                            echo number_format($lt_dhu, 1); ?>%
+                        </td>
+                    </tr>
+                    <?php endif; ?>
+                    
+                    <!-- ============================================================ -->
+                    <!-- FACTORY GRAND TOTAL/AVERAGE (Assembly - unit_id: 996) -->
+                    <!-- ============================================================ -->
+                    <?php if ($is_assembly_division && isset($summary_rows['grand_total']) && $summary_rows['grand_total']['ttl_sam_pc'] > 0): 
+                        $gt = $summary_rows['grand_total'];
+                    ?>
+                    <tr class="grand-total-row">
+                        <td colspan="2" style="font-weight:800;">Factory Grand Total/Average</td>
+                        <td style="font-weight:800;"><?php echo number_format($gt['ttl_sam_pc'] ?? 0, 4); ?></td>
+                        <td style="font-weight:800;"><?php echo number_format($gt['unit_smv'] ?? 0, 3); ?></td>
+                        <td style="font-weight:800;"><?php echo number_format($gt['day_forecast'] ?? 0, 1); ?></td>
+                        <td style="font-weight:800;"><?php echo number_format($gt['unit_carder'] ?? 0, 0); ?></td>
+                        <td style="font-weight:800;"><?php echo number_format($gt['plan_hours'] ?? 0, 1); ?></td>
+                        <td style="font-weight:800;"><?php echo number_format($gt['worked_hours'] ?? 0, 1); ?></td>
+                        <td style="font-weight:800;"><?php echo number_format($gt['available_minutes'] ?? 0, 0); ?></td>
+                        <td style="font-weight:800;"><?php echo number_format($gt['plan_minutes'] ?? 0, 1); ?></td>
+                        <td style="font-weight:800;"><?php echo number_format(($gt['plan_eff'] ?? 0) * 100, 0); ?>%</td>
+                        <td style="font-weight:800;"><?php echo number_format($gt['target_100'] ?? 0, 0); ?></td>
+                        <?php for ($h = 1; $h <= $work_hours; $h++): ?>
+                        <td style="font-weight:800;"><?php echo number_format($gt["hour_$h"] ?? 0, 4); ?></td>
+                        <?php endfor; ?>
+                        <td style="font-weight:800;"><?php echo number_format($gt['day_total'] ?? 0, 0); ?></td>
+                        <td style="font-weight:800;"><?php echo number_format($gt['ern_minutes'] ?? 0, 1); ?></td>
+                        <td style="font-weight:800;"><?php echo number_format(($gt['acvd_eff'] ?? 0) * 100, 1); ?>%</td>
+                    </tr>
+                    <?php endif; ?>
                     
                     <?php endif; ?>
                 </tbody>
@@ -507,7 +731,9 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         </div>
 
         <div style="margin-top: 16px; text-align: left;">
-            <a href="reports.php" class="back-button">← Back to Reports</a>
+            <a href="reports.php?from=<?php echo $from_date; ?>&to=<?php echo $to_date; ?>&division=<?php echo $division_filter; ?>" class="back-button">
+                ← Back to Reports
+            </a>
         </div>
     </div>
 
