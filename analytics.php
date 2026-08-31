@@ -1,5 +1,5 @@
 <?php
-// analytics.php - Complete Analytics Dashboard with Saved Data
+// analytics.php - Complete Analytics Dashboard - Today Only
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/functions.php';
@@ -14,11 +14,9 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// Get filter parameters
+// Always use today's date
+$selected_date = date('Y-m-d');
 $selected_division = isset($_GET['division']) ? (int)$_GET['division'] : 1;
-$filter_type = isset($_GET['filter_type']) ? $_GET['filter_type'] : 'date';
-$selected_date = isset($_GET['date']) ? $_GET['date'] : date('Y-m-d');
-$selected_month = isset($_GET['month']) ? $_GET['month'] : date('Y-m');
 
 // Validate division
 if (!in_array($selected_division, [1, 2, 3, 7])) {
@@ -202,78 +200,30 @@ function getSavedTrendData($conn, $division_id, $days) {
 $component_data = [];
 $summary_rows = [];
 
-if ($filter_type === 'date') {
-    // Get saved components
-    $saved_components = getSavedComponentData($conn, $selected_division, $selected_date);
-    foreach ($saved_components as $report) {
-        $component_data[$report['unit_id']] = $report;
-    }
-    
-    // Get saved summary rows
-    $saved_summary = getSavedSummaryData($conn, $selected_division, $selected_date);
-    foreach ($saved_summary as $report) {
-        $unit_id = $report['unit_id'];
-        if ($unit_id == 999) $summary_rows['match_out'] = $report;
-        elseif ($unit_id == 998) $summary_rows['dhu'] = $report;
-        elseif ($unit_id == 997) $summary_rows['lean_total'] = $report;
-        elseif ($unit_id == 996) $summary_rows['grand_total'] = $report;
-    }
-    
-    $display_date = date('M d, Y', strtotime($selected_date));
-} else {
-    // Month filter - average data from all days in month
-    $month_start = $selected_month . '-01';
-    $month_end = date('Y-m-t', strtotime($month_start));
-    
-    // Get all dates in the month
-    $stmt = $conn->prepare("
-        SELECT DISTINCT report_date 
-        FROM production_reports 
-        WHERE devition_id = ? AND report_date BETWEEN ? AND ?
-        ORDER BY report_date
-    ");
-    $stmt->execute([$selected_division, $month_start, $month_end]);
-    $dates = $stmt->fetchAll(PDO::FETCH_COLUMN);
-    $count_days = count($dates);
-    
-    // Aggregate data from all dates
-    $agg_data = [];
-    $agg_eff = [];
-    $agg_dhu = [];
-    
-    foreach ($dates as $date) {
-        $hourly = getSavedHourlyData($conn, $selected_division, $date, $work_hours);
-        $dhu = getSavedDHUData($conn, $selected_division, $date, $work_hours);
-        for ($h = 1; $h <= $work_hours; $h++) {
-            $agg_data[$h] = ($agg_data[$h] ?? 0) + $hourly['data'][$h];
-            $agg_eff[$h] = ($agg_eff[$h] ?? 0) + $hourly['eff'][$h];
-            $agg_dhu[$h] = ($agg_dhu[$h] ?? 0) + $dhu[$h];
-        }
-    }
-    
-    // Average the data
-    if ($count_days > 0) {
-        for ($h = 1; $h <= $work_hours; $h++) {
-            $hourly_data['data'][$h] = round(($agg_data[$h] ?? 0) / $count_days, 0);
-            $hourly_data['eff'][$h] = round(($agg_eff[$h] ?? 0) / $count_days, 1);
-            $dhu_data[$h] = round(($agg_dhu[$h] ?? 0) / $count_days, 1);
-        }
-    } else {
-        $hourly_data = ['data' => array_fill(1, $work_hours, 0), 'eff' => array_fill(1, $work_hours, 0)];
-        $dhu_data = array_fill(1, $work_hours, 0);
-    }
-    
-    $display_date = date('F Y', strtotime($selected_month));
+// Get saved components
+$saved_components = getSavedComponentData($conn, $selected_division, $selected_date);
+foreach ($saved_components as $report) {
+    $component_data[$report['unit_id']] = $report;
 }
 
-// Get hourly data for display
-if ($filter_type === 'date') {
-    $hourly_data = getSavedHourlyData($conn, $selected_division, $selected_date, $work_hours);
-    $dhu_data = getSavedDHUData($conn, $selected_division, $selected_date, $work_hours);
-    $match_out = getSavedMatchOutData($conn, $selected_division, $selected_date, $work_hours);
-    $lean_total = getSavedLeanTotalData($conn, $selected_division, $selected_date);
-    $grand_total = getSavedGrandTotalData($conn, $selected_division, $selected_date);
+// Get saved summary rows
+$saved_summary = getSavedSummaryData($conn, $selected_division, $selected_date);
+foreach ($saved_summary as $report) {
+    $unit_id = $report['unit_id'];
+    if ($unit_id == 999) $summary_rows['match_out'] = $report;
+    elseif ($unit_id == 998) $summary_rows['dhu'] = $report;
+    elseif ($unit_id == 997) $summary_rows['lean_total'] = $report;
+    elseif ($unit_id == 996) $summary_rows['grand_total'] = $report;
 }
+
+$display_date = date('M d, Y', strtotime($selected_date));
+
+// Get hourly data for display
+$hourly_data = getSavedHourlyData($conn, $selected_division, $selected_date, $work_hours);
+$dhu_data = getSavedDHUData($conn, $selected_division, $selected_date, $work_hours);
+$match_out = getSavedMatchOutData($conn, $selected_division, $selected_date, $work_hours);
+$lean_total = getSavedLeanTotalData($conn, $selected_division, $selected_date);
+$grand_total = getSavedGrandTotalData($conn, $selected_division, $selected_date);
 
 // Get trend data
 $trend_data = getSavedTrendData($conn, $selected_division, 30);
@@ -281,7 +231,6 @@ $trend_data = getSavedTrendData($conn, $selected_division, 30);
 // Get component names for display
 $component_names = [];
 foreach ($component_data as $report) {
-    // Get component name from database
     $stmt = $conn->prepare("SELECT name FROM components WHERE id = ?");
     $stmt->execute([$report['unit_id']]);
     $comp = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -490,7 +439,7 @@ $is_assembly = ($selected_division == 7);
             display: flex;
             gap: 12px;
             flex-wrap: wrap;
-            margin-bottom: 16px;
+            margin-bottom: 20px;
             padding: 16px 20px;
             background: var(--glass-bg);
             backdrop-filter: blur(20px);
@@ -517,62 +466,24 @@ $is_assembly = ($selected_division == 7);
         .division-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); box-shadow: 0 4px 15px rgba(33,115,70,0.3); }
         .division-btn .icon { font-size: 20px; }
 
-        .filter-bar {
+        .summary-badges {
             display: flex;
-            gap: 16px;
-            flex-wrap: wrap;
-            align-items: center;
-            margin-bottom: 20px;
-            padding: 12px 20px;
-            background: var(--glass-bg);
-            backdrop-filter: blur(20px);
-            border: 1px solid var(--glass-border);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow);
-        }
-        .filter-bar .filter-group {
-            display: flex;
-            align-items: center;
             gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
         }
-        .filter-bar .filter-group label {
-            font-size: 13px;
-            font-weight: 600;
-            color: var(--steel);
-        }
-        .filter-bar .filter-group select,
-        .filter-bar .filter-group input {
-            padding: 6px 12px;
-            border: 1px solid var(--glass-border);
-            border-radius: 8px;
-            font-size: 13px;
-            font-weight: 500;
-            font-family: 'Inter', sans-serif;
-            background: rgba(255,255,255,0.7);
-            color: var(--text-dark);
-        }
-        .filter-bar .filter-group select:focus,
-        .filter-bar .filter-group input:focus {
-            outline: none;
-            border-color: var(--primary);
-        }
-        .filter-bar .btn-apply {
-            padding: 6px 20px;
-            background: var(--primary);
+        .summary-badges .badge {
+            padding: 4px 14px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 700;
             color: #fff;
-            border: none;
-            border-radius: 8px;
-            font-weight: 600;
-            font-size: 13px;
-            cursor: pointer;
-            transition: all 0.3s;
-            font-family: 'Inter', sans-serif;
         }
-        .filter-bar .btn-apply:hover {
-            background: var(--primary-dark);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(33,115,70,0.3);
-        }
+        .badge-match-out { background: #6c757d; }
+        .badge-dhu { background: #dc3545; }
+        .badge-lean { background: #17a2b8; }
+        .badge-grand { background: #6f42c1; }
+        .badge-no-data { background: #6c757d; opacity: 0.5; }
 
         .stats-row {
             display: grid;
@@ -604,25 +515,6 @@ $is_assembly = ($selected_division == 7);
             color: var(--steel);
             margin-top: 4px;
         }
-
-        .summary-badges {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-bottom: 20px;
-        }
-        .summary-badges .badge {
-            padding: 4px 14px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 700;
-            color: #fff;
-        }
-        .badge-match-out { background: #6c757d; }
-        .badge-dhu { background: #dc3545; }
-        .badge-lean { background: #17a2b8; }
-        .badge-grand { background: #6f42c1; }
-        .badge-no-data { background: #6c757d; opacity: 0.5; }
 
         .dashboard-table {
             width: 100%;
@@ -798,10 +690,6 @@ $is_assembly = ($selected_division == 7);
             .page-header .controls { width: 100%; flex-wrap: wrap; }
             .division-selector { flex-direction: row; flex-wrap: wrap; justify-content: center; }
             .division-btn { padding: 8px 16px; font-size: 13px; flex: 1; min-width: 80px; justify-content: center; }
-            .filter-bar { flex-direction: column; align-items: stretch; }
-            .filter-bar .filter-group { flex-wrap: wrap; }
-            .filter-bar .filter-group select,
-            .filter-bar .filter-group input { flex: 1; min-width: 100px; }
             .stats-row { grid-template-columns: 1fr 1fr; gap: 10px; }
             .stat-card { padding: 12px 16px; }
             .stat-card .number { font-size: 22px; }
@@ -878,30 +766,6 @@ $is_assembly = ($selected_division == 7);
             <?php endforeach; ?>
         </div>
 
-        <!-- Filter Bar -->
-        <form class="filter-bar" method="GET" action="">
-            <input type="hidden" name="division" value="<?php echo $selected_division; ?>">
-            <div class="filter-group">
-                <label>Filter:</label>
-                <select name="filter_type" onchange="this.form.submit()">
-                    <option value="date" <?php echo $filter_type === 'date' ? 'selected' : ''; ?>>Date</option>
-                    <option value="month" <?php echo $filter_type === 'month' ? 'selected' : ''; ?>>Month</option>
-                </select>
-            </div>
-            <?php if ($filter_type === 'date'): ?>
-            <div class="filter-group">
-                <label>Date:</label>
-                <input type="date" name="date" value="<?php echo $selected_date; ?>">
-            </div>
-            <?php else: ?>
-            <div class="filter-group">
-                <label>Month:</label>
-                <input type="month" name="month" value="<?php echo $selected_month; ?>">
-            </div>
-            <?php endif; ?>
-            <button type="submit" class="btn-apply">Apply</button>
-        </form>
-
         <!-- Summary Badges -->
         <div class="summary-badges">
             <?php if ($has_match_out): ?>
@@ -942,7 +806,7 @@ $is_assembly = ($selected_division == 7);
         </div>
 
         <!-- ============================================================ -->
-        <!-- DASHBOARD TABLE - Using Saved Data -->
+        <!-- DASHBOARD TABLE -->
         <!-- ============================================================ -->
         <table class="dashboard-table">
             <thead>
