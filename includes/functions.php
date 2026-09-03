@@ -53,6 +53,69 @@ function calcAchievedEff90($earnedMinutes, $availableMinutes, $planHours, $worke
 }
 
 // ============================================================
+// PROFIT FORMULAS - SHIRT DETAIL
+// ============================================================
+function calcShirtProfit($epm, $dayTotal, $unitSmv, $unitCarder, $workedHours, $planHours) {
+    // = AD * (AA * F) - (7365 * H) * (J / I)
+    // AD = EPM, AA = Day Total, F = Unit SMV, H = Unit Carder, J = Worked Hours, I = Plan Hours
+    $part1 = $epm * ($dayTotal * $unitSmv);
+    $part2 = (7365 * $unitCarder) * ($workedHours / $planHours);
+    return $part1 - $part2;
+}
+
+// ============================================================
+// PROFIT FORMULAS - SHIRT SUMMARY (Assembly)
+// ============================================================
+function calcShirtSummaryProfit($dayTotal, $unitCarder, $matchOutCarder) {
+    // = (500 * AA) - (7365 * (H + H8))
+    // AA = Day Total, H = Unit Carder, H8 = Match Out Carder
+    return (500 * $dayTotal) - (7365 * ($unitCarder + $matchOutCarder));
+}
+
+// ============================================================
+// PROFIT FORMULAS - TROUSER DETAIL
+// ============================================================
+function calcTrouserProfit($epm, $dayTotal, $unitSmv, $unitCarder, $workedHours, $planHours) {
+    // Same as Shirt detail
+    $part1 = $epm * ($dayTotal * $unitSmv);
+    $part2 = (7365 * $unitCarder) * ($workedHours / $planHours);
+    return $part1 - $part2;
+}
+
+// ============================================================
+// PROFIT FORMULAS - TROUSER SUMMARY (Assembly)
+// ============================================================
+function calcTrouserSummaryProfit($dayTotal, $unitCarder, $matchOutCarder) {
+    // = (500 * AA) - (7365 * (H + H10))
+    // AA = Day Total, H = Unit Carder, H10 = Match Out Carder
+    return (500 * $dayTotal) - (7365 * ($unitCarder + $matchOutCarder));
+}
+
+// ============================================================
+// PROFIT FORMULAS - ASSEMBLE DETAIL
+// ============================================================
+function calcAssembleProfit($dayTotal, $unitCarder, $matchOutCarder) {
+    // = (500 * AA) - (7365 * (H + H12)) or (H + H14) or (H + H16) or (H + H18)
+    return (500 * $dayTotal) - (7365 * ($unitCarder + $matchOutCarder));
+}
+
+// ============================================================
+// PROFIT FORMULAS - ASSEMBLE SUMMARY (Lean Total)
+// ============================================================
+function calcLeanTotalProfit($dayTotal, $unitCarder, $matchOutCarder) {
+    // = (500 * AA32) - (7365 * (H32 + H20))
+    return (500 * $dayTotal) - (7365 * ($unitCarder + $matchOutCarder));
+}
+
+// ============================================================
+// PROFIT FORMULAS - FACTORY GRAND TOTAL
+// ============================================================
+function calcFactoryGrandTotalProfit($dayTotal, $unitCarder, $matchOutCarder) {
+    // = (500 * AA35) - (7365 * (H35 + H23))
+    return (500 * $dayTotal) - (7365 * ($unitCarder + $matchOutCarder));
+}
+
+// ============================================================
 // ASSEMBLY ROW FORMULAS (80% target)
 // ============================================================
 function calcAssemblyDayForecast80($carder, $sectionSmv) {
@@ -174,7 +237,6 @@ function saveMatchOutData($conn, $division_id, $date, $work_hours, $components =
         return false;
     }
     
-    // Use a special unit_id for match out (999)
     $unit_id = 999;
     
     $data = [
@@ -234,7 +296,6 @@ function saveDHUData($conn, $division_id, $date, $work_hours, $components = null
         return false;
     }
     
-    // Use a special unit_id for DHU (998)
     $unit_id = 998;
     
     $data = [
@@ -373,7 +434,6 @@ function saveLeanTotalData($conn, $division_id, $date, $work_hours, $components 
     
     $lt = calculateLeanTotalAssembly($assembly_rows, $work_hours);
     
-    // Use a special unit_id for Lean Total (997)
     $unit_id = 997;
     
     $data = [
@@ -504,13 +564,11 @@ function saveGrandTotalData($conn, $division_id, $date, $work_hours, $components
         return false;
     }
     
-    // Get shirt and trouser match out data
     $shirt_match = calculateMatchOutFixed($conn, 1, $date, $work_hours);
     $trouser_match = calculateMatchOutFixed($conn, 2, $date, $work_hours);
     
     $gt = calculateGrandTotalAssembly($assembly_rows, $trouser_match, $shirt_match, $work_hours);
     
-    // Use a special unit_id for Factory Grand Total (996)
     $unit_id = 996;
     
     $data = [
@@ -546,11 +604,9 @@ function saveAllSummaryRows($conn, $division_id, $date, $work_hours, $is_assembl
     $components = getComponents($conn, $division_id);
     
     if ($is_assembly) {
-        // Save Lean Total and Factory Grand Total for Assembly
         saveLeanTotalData($conn, $division_id, $date, $work_hours, $components);
         saveGrandTotalData($conn, $division_id, $date, $work_hours, $components);
     } else {
-        // Save Match Out and DHU for Shirt/Trouser
         saveMatchOutData($conn, $division_id, $date, $work_hours, $components);
         saveDHUData($conn, $division_id, $date, $work_hours, $components);
     }
