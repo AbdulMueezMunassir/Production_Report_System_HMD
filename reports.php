@@ -1,5 +1,5 @@
 <?php
-// reports.php - WITH WORKING VIEW BUTTON AND FILTER PERSISTENCE
+// reports.php - FINAL FIXED - Shows Shirt, Trouser, Assembly correctly
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
@@ -17,72 +17,88 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// Get date range from session or default
-$from_date = isset($_GET['from']) && !empty($_GET['from']) ? $_GET['from'] : (isset($_SESSION['report_from']) ? $_SESSION['report_from'] : date('Y-m-d'));
-$to_date = isset($_GET['to']) && !empty($_GET['to']) ? $_GET['to'] : (isset($_SESSION['report_to']) ? $_SESSION['report_to'] : date('Y-m-d'));
-$division_filter = isset($_GET['division']) ? $_GET['division'] : (isset($_SESSION['report_division']) ? $_SESSION['report_division'] : 'all');
+// ALWAYS use GET parameters if provided; otherwise default to today
+// Do NOT fall back to session values unless GET is explicitly given
+$from_date = isset($_GET['from']) && !empty($_GET['from']) ? $_GET['from'] : date('Y-m-d');
+$to_date   = isset($_GET['to']) && !empty($_GET['to']) ? $_GET['to'] : date('Y-m-d');
+$division_filter = isset($_GET['division']) ? $_GET['division'] : 'all';
 
-// Save to session
-$_SESSION['report_from'] = $from_date;
-$_SESSION['report_to'] = $to_date;
-$_SESSION['report_division'] = $division_filter;
+// Save only if GET parameters were actually used (so session stays in sync)
+if (isset($_GET['from']) || isset($_GET['to']) || isset($_GET['division'])) {
+    $_SESSION['report_from'] = $from_date;
+    $_SESSION['report_to'] = $to_date;
+    $_SESSION['report_division'] = $division_filter;
+} else {
+    // If no GET params, we still want to set session to today for consistency
+    $_SESSION['report_from'] = $from_date;
+    $_SESSION['report_to'] = $to_date;
+    $_SESSION['report_division'] = $division_filter;
+}
 
-// Define the divisions with their display names
-$all_divisions = [
-    1 => 'Shirt',
-    2 => 'Trouser',
-    3 => 'Coat',
-    7 => 'Assembly'
-];
+// ============================================================
+// DIVISION NAMES - Loaded dynamically from the divisions table
+// ============================================================
+$division_display_names = [];
 
-// Get ONLY the main divisions
+// Get divisions for the filter dropdown
 $divisions = [];
 try {
-    $stmt = $conn->prepare("SELECT * FROM divisions WHERE id IN (1, 2, 3, 7) ORDER BY FIELD(id, 1, 2, 3, 7)");
+    $stmt = $conn->prepare("SELECT id, name, type FROM divisions ORDER BY id ASC");
     $stmt->execute();
     $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
     $divisions = [];
     foreach ($results as $div) {
-        if (isset($all_divisions[$div['id']])) {
-            $div['name'] = $all_divisions[$div['id']];
-            $divisions[] = $div;
+        // For any division that is type 'assembly', display as "Assembly"
+        if (isset($div['type']) && $div['type'] === 'assembly') {
+            $display_name = 'Assembly';
+        } else {
+            $display_name = $div['name'];
         }
+        $division_display_names[$div['id']] = $display_name;
+        $div['display_name'] = $display_name;
+        $divisions[] = $div;
     }
 } catch (Exception $e) {
+    error_log("Divisions query error: " . $e->getMessage());
     $divisions = array();
 }
 
-// Build the query
+// Build the query - Get ALL reports
 $sql = "SELECT 
-            r.report_date, 
-            d.name as division_name, 
+            DATE(r.report_date) AS report_date, 
+            r.devition_id,
             r.acvd_eff,
             r.day_total,
             r.unit_id,
             r.ttl_sam_pc,
             r.unit_smv,
             r.unit_carder,
-            r.devition_id,
             r.id as report_id,
-            (SELECT COUNT(*) FROM production_reports r2 
-             WHERE r2.report_date = r.report_date 
-             AND r2.devition_id = r.devition_id 
-             AND r2.unit_id NOT IN (996, 997, 998, 999)) as component_count
+            r.ern_minutes,
+            r.plan_hours,
+            r.worked_hours,
+            r.available_minutes,
+            r.plan_minutes,
+            r.plan_eff,
+            r.target_100,
+            r.epm,
+            r.style_epm,
+            r.profit,
+            r.hour_1, r.hour_2, r.hour_3, r.hour_4, r.hour_5,
+            r.hour_6, r.hour_7, r.hour_8, r.hour_9, r.hour_10, r.hour_11
         FROM production_reports r 
-        JOIN divisions d ON r.devition_id = d.id 
-        WHERE r.report_date BETWEEN ? AND ?
-        AND d.id IN (1, 2, 3, 7)";
+        WHERE DATE(r.report_date) BETWEEN ? AND ?
+        AND r.unit_id NOT IN (996, 997, 998, 999)";
 
 $params = array($from_date, $to_date);
 
 if ($division_filter !== 'all' && !empty($division_filter)) {
-    $sql .= " AND d.id = ?";
+    $sql .= " AND r.devition_id = ?";
     $params[] = (int)$division_filter;
 }
 
-$sql .= " ORDER BY r.report_date DESC, d.name ASC, 
-          FIELD(r.unit_id, 996, 997, 998, 999, 0) DESC";
+$sql .= " ORDER BY r.report_date DESC, r.devition_id ASC";
 
 try {
     $stmt = $conn->prepare($sql);
@@ -94,17 +110,52 @@ try {
     $reports = array();
 }
 
+// Get summary rows separately (MO, DHU, Lean Total, Grand Total)
+$summary_sql = "SELECT 
+            DATE(r.report_date) AS report_date, 
+            r.devition_id,
+            r.unit_id,
+            r.day_total,
+            r.acvd_eff,
+            r.ern_minutes,
+            r.unit_carder,
+            r.ttl_sam_pc,
+            r.unit_smv
+        FROM production_reports r 
+        WHERE DATE(r.report_date) BETWEEN ? AND ?
+        AND r.unit_id IN (996, 997, 998, 999)";
+
+$summary_params = array($from_date, $to_date);
+if ($division_filter !== 'all' && !empty($division_filter)) {
+    $summary_sql .= " AND r.devition_id = ?";
+    $summary_params[] = (int)$division_filter;
+}
+
+try {
+    $stmt = $conn->prepare($summary_sql);
+    $stmt->execute($summary_params);
+    $summary_reports = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    if (!is_array($summary_reports)) $summary_reports = array();
+} catch (Exception $e) {
+    error_log("Summary query error: " . $e->getMessage());
+    $summary_reports = array();
+}
+
 // Group reports by date and division
 $grouped_reports = [];
 
+// First, add all regular components
 foreach ($reports as $report) {
-    $key = $report['report_date'] . '_' . $report['devition_id'];
+    $devition_id = (int)$report['devition_id'];
+    $display_name = isset($division_display_names[$devition_id]) ? $division_display_names[$devition_id] : 'Unknown';
+    
+    $key = date('Y-m-d', strtotime($report['report_date'])) . '_' . $devition_id;
     
     if (!isset($grouped_reports[$key])) {
         $grouped_reports[$key] = [
             'date' => $report['report_date'],
-            'division_id' => $report['devition_id'],
-            'division_name' => $report['division_name'],
+            'division_id' => $devition_id,
+            'division_name' => $display_name,
             'components' => [],
             'summary' => [
                 'match_out' => null,
@@ -113,13 +164,49 @@ foreach ($reports as $report) {
                 'grand_total' => null
             ],
             'total_pcs' => 0,
+            'total_ern' => 0,
             'total_eff' => 0,
-            'eff_count' => 0,
-            'component_count' => $report['component_count'] ?? 0
+            'eff_count' => 0
         ];
     }
     
-    // Check if this is a summary row
+    $grouped_reports[$key]['components'][] = $report;
+    if ($report['day_total'] > 0) {
+        $grouped_reports[$key]['total_pcs'] += $report['day_total'];
+        $grouped_reports[$key]['total_ern'] += $report['ern_minutes'] ?? 0;
+        if ($report['acvd_eff'] > 0) {
+            $grouped_reports[$key]['total_eff'] += $report['acvd_eff'] * 100;
+            $grouped_reports[$key]['eff_count']++;
+        }
+    }
+}
+
+// Then, add summary rows
+foreach ($summary_reports as $report) {
+    $devition_id = (int)$report['devition_id'];
+    $display_name = isset($division_display_names[$devition_id]) ? $division_display_names[$devition_id] : 'Unknown';
+    
+    $key = date('Y-m-d', strtotime($report['report_date'])) . '_' . $devition_id;
+    
+    if (!isset($grouped_reports[$key])) {
+        $grouped_reports[$key] = [
+            'date' => $report['report_date'],
+            'division_id' => $devition_id,
+            'division_name' => $display_name,
+            'components' => [],
+            'summary' => [
+                'match_out' => null,
+                'dhu' => null,
+                'lean_total' => null,
+                'grand_total' => null
+            ],
+            'total_pcs' => 0,
+            'total_ern' => 0,
+            'total_eff' => 0,
+            'eff_count' => 0
+        ];
+    }
+    
     $unit_id = $report['unit_id'] ?? 0;
     if ($unit_id == 999) {
         $grouped_reports[$key]['summary']['match_out'] = $report;
@@ -129,23 +216,23 @@ foreach ($reports as $report) {
         $grouped_reports[$key]['summary']['lean_total'] = $report;
     } elseif ($unit_id == 996) {
         $grouped_reports[$key]['summary']['grand_total'] = $report;
-    } else {
-        $grouped_reports[$key]['components'][] = $report;
-        if ($report['day_total'] > 0) {
-            $grouped_reports[$key]['total_pcs'] += $report['day_total'];
-            if ($report['acvd_eff'] > 0) {
-                $grouped_reports[$key]['total_eff'] += $report['acvd_eff'] * 100;
-                $grouped_reports[$key]['eff_count']++;
-            }
-        }
     }
 }
 
 // Calculate summary for each group
 foreach ($grouped_reports as $key => &$group) {
     $group['avg_eff'] = $group['eff_count'] > 0 ? round($group['total_eff'] / $group['eff_count'], 1) : 0;
-    $group['is_assembly'] = ($group['division_id'] == 7);
+    $group['avg_ern'] = $group['eff_count'] > 0 ? round($group['total_ern'] / $group['eff_count'], 1) : 0;
+    
+    $summary_count = 0;
+    if ($group['summary']['match_out']) $summary_count++;
+    if ($group['summary']['dhu']) $summary_count++;
+    if ($group['summary']['lean_total']) $summary_count++;
+    if ($group['summary']['grand_total']) $summary_count++;
+    $group['summary_count'] = $summary_count;
+    $group['component_count'] = count($group['components']);
 }
+unset($group);
 
 // Calculate stats
 $total_reports = count($grouped_reports);
@@ -159,8 +246,16 @@ $avg_eff = $total_reports > 0 ? round($avg_eff / $total_reports, 1) : 0;
 
 $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
 
-// Clear view report session filter flag
-unset($_SESSION['from_view_report']);
+// Debug: Check if Assembly has data (any division with type 'assembly')
+$assembly_count = 0;
+foreach ($grouped_reports as $group) {
+    foreach ($divisions as $div) {
+        if ($div['id'] == $group['division_id'] && isset($div['type']) && $div['type'] === 'assembly') {
+            $assembly_count++;
+            break;
+        }
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -587,7 +682,7 @@ unset($_SESSION['from_view_report']);
                     <?php if (!empty($divisions)): ?>
                     <?php foreach ($divisions as $div): ?>
                     <option value="<?php echo $div['id']; ?>" <?php echo $division_filter == $div['id'] ? 'selected' : ''; ?>>
-                        <?php echo htmlspecialchars($div['name']); ?>
+                        <?php echo htmlspecialchars($div['display_name']); ?>
                     </option>
                     <?php endforeach; ?>
                     <?php endif; ?>
@@ -603,6 +698,15 @@ unset($_SESSION['from_view_report']);
         <?php if ($total_reports > 0): ?>
         <div class="debug-success">
             ✅ Found <strong><?php echo $total_reports; ?></strong> report groups matching your filter.
+            <?php if ($assembly_count > 0): ?>
+            <span style="color:var(--primary);"> (Includes Assembly)</span>
+            <?php else: ?>
+            <span style="color:var(--bad);"> (No Assembly data found for this date range)</span>
+            <?php endif; ?>
+        </div>
+        <?php else: ?>
+        <div class="debug-success" style="background:rgba(255,193,7,0.1); border-color:rgba(255,193,7,0.3); color:#856404;">
+            ⚠️ No reports found for the selected date range. Please ensure you have saved data for this date.
         </div>
         <?php endif; ?>
 
@@ -621,14 +725,16 @@ unset($_SESSION['from_view_report']);
                         <th style="text-align:left;">Devition</th>
                         <th>Components</th>
                         <th>Achieved Eff</th>
+                        <th>Earn Minutes</th>
                         <th>Summary Rows</th>
                         <th style="text-align:center;">Action</th>
                     </tr>
                 </thead>
                 <tbody id="rep-body">
                     <?php if (empty($grouped_reports)): ?>
-                    <tr><td colspan="6" class="no-data">
-                        No reports found. Please add data in a Devition and click "Save All".
+                    <tr><td colspan="7" class="no-data">
+                        No reports found for the selected date range. 
+                        Please go to a Devition page, enter data, and click "Save All".
                     </td></tr>
                     <?php else: ?>
                     <?php foreach ($grouped_reports as $group): 
@@ -639,15 +745,8 @@ unset($_SESSION['from_view_report']);
                         // Build view URL with current filters
                         $view_url = 'view_report.php?date=' . $group['date'] . '&division=' . $group['division_id'] . '&from=' . $from_date . '&to=' . $to_date . '&division_filter=' . $division_filter;
                         
-                        // Count summary rows present
-                        $summary_count = 0;
-                        $summary_types = [];
-                        if ($group['summary']['match_out']) { $summary_count++; $summary_types[] = 'Match Out'; }
-                        if ($group['summary']['dhu']) { $summary_count++; $summary_types[] = 'DHU'; }
-                        if ($group['summary']['lean_total']) { $summary_count++; $summary_types[] = 'Lean Total'; }
-                        if ($group['summary']['grand_total']) { $summary_count++; $summary_types[] = 'Grand Total'; }
-                        
-                        $component_count = count($group['components']);
+                        $summary_count = $group['summary_count'] ?? 0;
+                        $component_count = $group['component_count'] ?? 0;
                     ?>
                     <tr>
                         <td><?php echo date('Y-m-d', strtotime($group['date'])); ?></td>
@@ -659,6 +758,7 @@ unset($_SESSION['from_view_report']);
                             <?php endif; ?>
                         </td>
                         <td class="<?php echo $eff_class; ?>"><?php echo number_format($eff, 1); ?>%</td>
+                        <td><?php echo number_format($group['avg_ern'], 1); ?></td>
                         <td>
                             <div class="summary-badges">
                                 <?php if ($group['summary']['match_out']): ?>
@@ -725,6 +825,15 @@ unset($_SESSION['from_view_report']);
             document.getElementById('rep-division').value = 'all';
             document.querySelector('.filter-row').submit();
         }
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                var active = document.activeElement;
+                if (active && (active.id === 'rep-from' || active.id === 'rep-to' || active.id === 'rep-division')) {
+                    document.querySelector('.filter-row').submit();
+                }
+            }
+        });
     </script>
 </body>
 </html>
