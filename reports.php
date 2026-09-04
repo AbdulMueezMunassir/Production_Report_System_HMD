@@ -545,33 +545,9 @@ foreach ($grouped_reports as $group) {
             box-shadow: 0 4px 15px rgba(0,0,0,0.08);
         }
         
-        .weather-bar {
-            display: flex;
-            justify-content: flex-end;
-            align-items: center;
-            gap: 16px;
-            padding: 8px 30px;
-            background: var(--glass-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border-top: 1px solid var(--glass-border);
-            font-size: 13px;
-            color: var(--steel);
-            margin-top: 16px;
-            font-weight: 500;
-        }
-        .weather-bar .temp { font-weight: 700; color: var(--text-dark); }
-        .weather-bar .weather-icon { font-size: 18px; }
         
-        .debug-success {
-            background: rgba(40, 167, 69, 0.1);
-            border: 1px solid rgba(40, 167, 69, 0.3);
-            padding: 8px 16px;
-            border-radius: 8px;
-            margin-bottom: 16px;
-            font-size: 13px;
-            color: #155724;
-        }
+        
+        
         
         .filter-actions {
             display: flex;
@@ -613,7 +589,6 @@ foreach ($grouped_reports as $group) {
             .filter-actions button { flex: 1; min-width: 80px; }
             .kpi-row { grid-template-columns: 1fr 1fr; }
             .topnav a { padding: 6px 12px; font-size: 13px; }
-            .weather-bar { padding: 8px 16px; justify-content: center; flex-wrap: wrap; }
             .table-shell { overflow-x: auto; }
             .table-shell table { font-size: 12px; }
             .table-shell th,
@@ -695,20 +670,7 @@ foreach ($grouped_reports as $group) {
             </div>
         </form>
 
-        <?php if ($total_reports > 0): ?>
-        <div class="debug-success">
-            ✅ Found <strong><?php echo $total_reports; ?></strong> report groups matching your filter.
-            <?php if ($assembly_count > 0): ?>
-            <span style="color:var(--primary);"> (Includes Assembly)</span>
-            <?php else: ?>
-            <span style="color:var(--bad);"> (No Assembly data found for this date range)</span>
-            <?php endif; ?>
-        </div>
-        <?php else: ?>
-        <div class="debug-success" style="background:rgba(255,193,7,0.1); border-color:rgba(255,193,7,0.3); color:#856404;">
-            ⚠️ No reports found for the selected date range. Please ensure you have saved data for this date.
-        </div>
-        <?php endif; ?>
+        
 
         <div class="kpi-row" id="rep-kpis">
             <div class="kpi-card"><div class="number"><?php echo $total_reports; ?></div><div class="label">Total Reports</div></div>
@@ -789,14 +751,7 @@ foreach ($grouped_reports as $group) {
         </div>
     </div>
 
-    <div class="weather-bar">
-        <span class="weather-icon">⛅</span>
-        <span class="temp">29°C</span>
-        <span>Partly sunny</span>
-        <span>|</span>
-        <span><?php echo date('g:i A'); ?></span>
-        <span><?php echo date('M d, Y'); ?></span>
-    </div>
+    
 
     <script>
         function updateClock() {
