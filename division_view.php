@@ -1,5 +1,5 @@
 <?php
-// division_view.php - SHIRT: Assembly SHIRT only | TROUSER: Assembly TROUSER only
+// division_view.php
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/functions.php';
@@ -12,7 +12,6 @@ $date = isset($_GET['date']) ? $_GET['date'] : date('Y-m-d');
 $work_hours = isset($_GET['hours']) ? (int)$_GET['hours'] : 10;
 $work_hours = max(1, min(11, $work_hours));
 
-// Get division info
 $div_sql = "SELECT * FROM divisions WHERE id = ?";
 $stmt = $conn->prepare($div_sql);
 $stmt->execute([$division_id]);
@@ -30,14 +29,13 @@ if ($is_assembly_division) {
     $division_name = 'Assembly';
 }
 
-// Get all components
 $components = getComponents($conn, $division_id);
 $component_data = [];
 
 $assembly_order = ['SHIRT', 'SHIRT MTM', 'TROUSER', 'TROUSER MTM', 'COAT', 'COAT MTM', 'KNIT'];
 
 // ============================================================
-// GET MATCH OUT DATA FROM SHIRT AND TROUSER FOR ASSEMBLY
+// MATCH OUT DATA FOR ASSEMBLY
 // ============================================================
 $shirt_match_out = [];
 $trouser_match_out = [];
@@ -53,9 +51,7 @@ if ($is_assembly_division) {
         $shirt_match_out_carder = (int)($shirt_match_out['unit_carder'] ?? 0);
         $shirt_match_out_smv = (float)($shirt_match_out['unit_smv'] ?? 0);
     } catch (Exception $e) {
-        $shirt_match_out = [];
-        $shirt_match_out_carder = 0;
-        $shirt_match_out_smv = 0;
+        $shirt_match_out = []; $shirt_match_out_carder = 0; $shirt_match_out_smv = 0;
     }
     
     try {
@@ -64,13 +60,11 @@ if ($is_assembly_division) {
         $trouser_match_out_carder = (int)($trouser_match_out['unit_carder'] ?? 0);
         $trouser_match_out_smv = (float)($trouser_match_out['unit_smv'] ?? 0);
     } catch (Exception $e) {
-        $trouser_match_out = [];
-        $trouser_match_out_carder = 0;
-        $trouser_match_out_smv = 0;
+        $trouser_match_out = []; $trouser_match_out_carder = 0; $trouser_match_out_smv = 0;
     }
 }
 
-// Process each component with Excel formulas
+// Process each component
 foreach ($components as $comp) {
     if ($comp['is_match_out']) continue;
     
@@ -99,13 +93,9 @@ foreach ($components as $comp) {
     }
     
     if ($is_assembly_division) {
-        // ASSEMBLY FORMULAS (80% target)
         $comp_name = strtoupper(trim($comp['name']));
         $total_assemble_carder = 0;
         
-        // ============================================================
-        // CHANGE 1: Total Assemble Carder per row
-        // ============================================================
         if ($comp_name === 'SHIRT') {
             if ($shirt_match_out_smv > 0) {
                 $data['unit_smv'] = $data['ttl_sam_pc'] - $shirt_match_out_smv;
@@ -119,14 +109,11 @@ foreach ($components as $comp) {
             }
             $total_assemble_carder = $data['unit_carder'] + $trouser_match_out_carder;
         } else {
-            // All other rows (SHIRT MTM, TROUSER MTM, COAT, COAT MTM, KNIT)
-            // Total Assemble Carder = own Assemble Carder
             $total_assemble_carder = $data['unit_carder'];
         }
         
         $data['total_assemble_carder'] = $total_assemble_carder;
         
-        // Day forecast (internal)
         if ($data['unit_smv'] > 0 && $data['unit_carder'] > 0) {
             $data['day_forecast'] = ($data['unit_carder'] * 600 / $data['unit_smv']) * 0.80;
         } else {
@@ -135,16 +122,11 @@ foreach ($components as $comp) {
         
         $data['plan_minutes'] = $data['day_forecast'] * $data['unit_smv'];
         $data['plan_eff'] = ($data['unit_carder'] * $data['plan_hours'] * 60 > 0) 
-            ? ($data['plan_minutes'] / ($data['unit_carder'] * $data['plan_hours'] * 60)) 
-            : 0;
+            ? ($data['plan_minutes'] / ($data['unit_carder'] * $data['plan_hours'] * 60)) : 0;
         
-        // ============================================================
-        // 100% Target: For SHIRT/TROUSER use Section SAM/Pc, for other rows (MTM etc) use TTl SAM/Pcs
-        // ============================================================
         if ($comp_name === 'SHIRT' || $comp_name === 'TROUSER') {
             $data['target_100'] = ($data['unit_smv'] > 0) ? ($data['unit_carder'] / $data['unit_smv']) * 60 : 0;
         } else {
-            // For MTM, COAT, COAT MTM, KNIT: use TTl SAM/Pcs
             $data['target_100'] = ($data['ttl_sam_pc'] > 0) ? ($data['unit_carder'] / $data['ttl_sam_pc']) * 60 : 0;
         }
         
@@ -153,55 +135,30 @@ foreach ($components as $comp) {
             $day_total += $data["hour_$h"];
         }
         $data['day_total'] = $day_total;
-        
         $data['ern_minutes'] = $day_total * $data['ttl_sam_pc'];
         
-        // ============================================================
-        // CHANGE 2: Available minutes / acvd_eff and Profit multiplier per row
-        // ============================================================
-        if ($comp_name === 'SHIRT' || $comp_name === 'TROUSER') {
-            $data['available_minutes'] = $total_assemble_carder * $data['plan_hours'] * 60;
-            
-            if ($data['available_minutes'] > 0 && $data['plan_hours'] > 0) {
-                $denominator = $data['available_minutes'] * ($data['worked_hours'] / $data['plan_hours']);
-                $data['acvd_eff'] = ($denominator > 0) ? ($data['ern_minutes'] / $denominator) : 0;
-            } else {
-                $data['acvd_eff'] = 0;
-            }
+        // Assembly Achieved Eff % (ALL rows)
+        $data['available_minutes'] = $total_assemble_carder * $data['plan_hours'] * 60;
+        
+        if ($data['available_minutes'] > 0 && $data['plan_hours'] > 0) {
+            $denominator = $data['available_minutes'] * ($data['worked_hours'] / $data['plan_hours']);
+            $data['acvd_eff'] = ($denominator > 0) ? ($data['ern_minutes'] / $denominator) : 0;
         } else {
-            // Other rows use original available_minutes/acvd_eff formulas
-            $data['available_minutes'] = $data['unit_carder'] * $data['plan_hours'] * 60;
-            
-            if ($data['available_minutes'] > 0 && $data['worked_hours'] > 0 && $data['plan_hours'] > 0) {
-                $data['acvd_eff'] = ($data['ern_minutes'] / $data['available_minutes']) * ($data['plan_hours'] / $data['worked_hours']);
-            } else {
-                $data['acvd_eff'] = 0;
-            }
+            $data['acvd_eff'] = 0;
         }
         
-        // ============================================================
-        // PROFIT FORMULA — different multiplier per Assembly row
-        // ============================================================
-        $profit_multiplier = 500; // default (SHIRT)
-        if ($comp_name === 'SHIRT MTM') {
-            $profit_multiplier = 1100;
-        } elseif ($comp_name === 'TROUSER') {
-            $profit_multiplier = 800;
-        } elseif ($comp_name === 'TROUSER MTM') {
-            $profit_multiplier = 1500;
-        } elseif ($comp_name === 'COAT') {
-            $profit_multiplier = 2800;
-        } elseif ($comp_name === 'COAT MTM') {
-            $profit_multiplier = 3400;
-        } elseif ($comp_name === 'KNIT') {
-            $profit_multiplier = 295;
-        }
-        // SHIRT stays at 500
+        $profit_multiplier = 500;
+        if ($comp_name === 'SHIRT MTM') $profit_multiplier = 1100;
+        elseif ($comp_name === 'TROUSER') $profit_multiplier = 800;
+        elseif ($comp_name === 'TROUSER MTM') $profit_multiplier = 1500;
+        elseif ($comp_name === 'COAT') $profit_multiplier = 2800;
+        elseif ($comp_name === 'COAT MTM') $profit_multiplier = 3400;
+        elseif ($comp_name === 'KNIT') $profit_multiplier = 295;
         
         $data['profit'] = ($profit_multiplier * $data['day_total']) - (7365 * $total_assemble_carder);
         
     } else {
-        // SHIRT/TROUSER/COAT FORMULAS (90% target) - unchanged
+        // SHIRT/TROUSER/COAT (90% target)
         if ($data['unit_smv'] > 0 && $data['unit_carder'] > 0) {
             $data['day_forecast'] = ($data['unit_carder'] * 600 / $data['unit_smv']) * 0.90;
         } else {
@@ -235,11 +192,28 @@ foreach ($components as $comp) {
     $component_data[$comp_id] = $data;
 }
 
-// Calculate Match Out for Shirt/Trouser/Coat (for non-assembly)
+// Calculate Match Out (aggregate from components) — but now editable
 $match_out = calculateMatchOutFixed($conn, $division_id, $date, $work_hours, $components);
 
+// Load Match Out saved data (unit_id = 999)
+$match_out_saved = getReportData($conn, $division_id, 999, $date);
+$match_out_hours = [];
+for ($h = 1; $h <= 11; $h++) {
+    $match_out_hours[$h] = (float)($match_out_saved["hour_$h"] ?? 0);
+}
+// If no saved hours yet, use the calculated ones as default
+$has_saved_mo_hours = false;
+for ($h = 1; $h <= $work_hours; $h++) {
+    if ($match_out_hours[$h] > 0) { $has_saved_mo_hours = true; break; }
+}
+if (!$has_saved_mo_hours && !empty($match_out['hours'])) {
+    for ($h = 1; $h <= $work_hours; $h++) {
+        $match_out_hours[$h] = $match_out['hours'][$h] ?? 0;
+    }
+}
+
 // ============================================================
-// GET ASSEMBLY DATA FOR UNDER SHIRT/TROUSER
+// ASSEMBLY DATA
 // ============================================================
 $assembly_shirt_row = null;
 $assembly_shirt_mtm_row = null;
@@ -281,9 +255,6 @@ foreach ($assembly_components as $comp) {
     $comp_name = strtoupper(trim($comp['name']));
     $total_assemble_carder = 0;
     
-    // ============================================================
-    // CHANGE 3: Total Assemble Carder per row (Loop 2)
-    // ============================================================
     if ($comp_name === 'SHIRT') {
         if ($shirt_match_out_smv > 0) {
             $data['unit_smv'] = $data['ttl_sam_pc'] - $shirt_match_out_smv;
@@ -297,7 +268,6 @@ foreach ($assembly_components as $comp) {
         }
         $total_assemble_carder = $data['unit_carder'] + $trouser_match_out_carder;
     } else {
-        // All other rows (SHIRT MTM, TROUSER MTM, COAT, COAT MTM, KNIT)
         $total_assemble_carder = $data['unit_carder'];
     }
     
@@ -310,16 +280,11 @@ foreach ($assembly_components as $comp) {
     }
     $data['plan_minutes'] = $data['day_forecast'] * $data['unit_smv'];
     $data['plan_eff'] = ($data['unit_carder'] * $data['plan_hours'] * 60 > 0) 
-        ? ($data['plan_minutes'] / ($data['unit_carder'] * $data['plan_hours'] * 60)) 
-        : 0;
+        ? ($data['plan_minutes'] / ($data['unit_carder'] * $data['plan_hours'] * 60)) : 0;
     
-    // ============================================================
-    // 100% Target: For SHIRT/TROUSER use Section SAM/Pc, for other rows (MTM etc) use TTl SAM/Pcs
-    // ============================================================
     if ($comp_name === 'SHIRT' || $comp_name === 'TROUSER') {
         $data['target_100'] = ($data['unit_smv'] > 0) ? ($data['unit_carder'] / $data['unit_smv']) * 60 : 0;
     } else {
-        // For MTM, COAT, COAT MTM, KNIT: use TTl SAM/Pcs
         $data['target_100'] = ($data['ttl_sam_pc'] > 0) ? ($data['unit_carder'] / $data['ttl_sam_pc']) * 60 : 0;
     }
     
@@ -330,43 +295,22 @@ foreach ($assembly_components as $comp) {
     $data['day_total'] = $day_total;
     $data['ern_minutes'] = $day_total * $data['ttl_sam_pc'];
     
-    // ============================================================
-    // CHANGE 3 (cont): Available minutes / acvd_eff + Profit multiplier
-    // ============================================================
-    if ($comp_name === 'SHIRT' || $comp_name === 'TROUSER') {
-        $data['available_minutes'] = $total_assemble_carder * $data['plan_hours'] * 60;
-        
-        if ($data['available_minutes'] > 0 && $data['plan_hours'] > 0) {
-            $denominator = $data['available_minutes'] * ($data['worked_hours'] / $data['plan_hours']);
-            $data['acvd_eff'] = ($denominator > 0) ? ($data['ern_minutes'] / $denominator) : 0;
-        } else {
-            $data['acvd_eff'] = 0;
-        }
+    $data['available_minutes'] = $total_assemble_carder * $data['plan_hours'] * 60;
+    
+    if ($data['available_minutes'] > 0 && $data['plan_hours'] > 0) {
+        $denominator = $data['available_minutes'] * ($data['worked_hours'] / $data['plan_hours']);
+        $data['acvd_eff'] = ($denominator > 0) ? ($data['ern_minutes'] / $denominator) : 0;
     } else {
-        $data['available_minutes'] = $data['unit_carder'] * $data['plan_hours'] * 60;
-        
-        if ($data['available_minutes'] > 0 && $data['worked_hours'] > 0 && $data['plan_hours'] > 0) {
-            $data['acvd_eff'] = ($data['ern_minutes'] / $data['available_minutes']) * ($data['plan_hours'] / $data['worked_hours']);
-        } else {
-            $data['acvd_eff'] = 0;
-        }
+        $data['acvd_eff'] = 0;
     }
     
-    // Profit multiplier per row
     $profit_multiplier = 500;
-    if ($comp_name === 'SHIRT MTM') {
-        $profit_multiplier = 1100;
-    } elseif ($comp_name === 'TROUSER') {
-        $profit_multiplier = 800;
-    } elseif ($comp_name === 'TROUSER MTM') {
-        $profit_multiplier = 1500;
-    } elseif ($comp_name === 'COAT') {
-        $profit_multiplier = 2800;
-    } elseif ($comp_name === 'COAT MTM') {
-        $profit_multiplier = 3400;
-    } elseif ($comp_name === 'KNIT') {
-        $profit_multiplier = 295;
-    }
+    if ($comp_name === 'SHIRT MTM') $profit_multiplier = 1100;
+    elseif ($comp_name === 'TROUSER') $profit_multiplier = 800;
+    elseif ($comp_name === 'TROUSER MTM') $profit_multiplier = 1500;
+    elseif ($comp_name === 'COAT') $profit_multiplier = 2800;
+    elseif ($comp_name === 'COAT MTM') $profit_multiplier = 3400;
+    elseif ($comp_name === 'KNIT') $profit_multiplier = 295;
     
     $data['profit'] = ($profit_multiplier * $data['day_total']) - (7365 * $total_assemble_carder);
     
@@ -448,45 +392,21 @@ if ($is_assembly_division) {
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         :root {
-            --primary: #217346;
-            --primary-dark: #1a5c3a;
-            --bg: #f0f2f5;
-            --card: rgba(255,255,255,0.85);
-            --text: #1a2332;
-            --text-dark: #0d1a2b;
-            --steel: #6b7a8f;
-            --line: rgba(255,255,255,0.2);
-            --border-radius: 16px;
-            --shadow: 0 8px 32px rgba(0,0,0,0.08);
-            --glass-border: rgba(255,255,255,0.3);
-            --glass-bg: rgba(255,255,255,0.15);
-            --bad: #dc3545;
-            --good: #28a745;
-            --warning: #ffc107;
-            --amber: #f57c00;
-            --dhu-red: #dc3545;
-            --dhu-bg: rgba(220, 53, 69, 0.12);
-            --grand-total-bg: rgba(33, 115, 70, 0.15);
-            --lean-bg: rgba(33, 115, 70, 0.08);
+            --primary: #217346; --primary-dark: #1a5c3a; --bg: #f0f2f5; --card: rgba(255,255,255,0.85);
+            --text: #1a2332; --text-dark: #0d1a2b; --steel: #6b7a8f; --line: rgba(255,255,255,0.2);
+            --border-radius: 16px; --shadow: 0 8px 32px rgba(0,0,0,0.08);
+            --glass-border: rgba(255,255,255,0.3); --glass-bg: rgba(255,255,255,0.15);
+            --bad: #dc3545; --good: #28a745; --warning: #ffc107; --amber: #f57c00;
+            --dhu-red: #dc3545; --dhu-bg: rgba(220, 53, 69, 0.12);
+            --grand-total-bg: rgba(33, 115, 70, 0.15); --lean-bg: rgba(33, 115, 70, 0.08);
         }
-        body {
-            font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 50%, #a5d6a7 100%);
-            min-height: 100vh;
-            color: var(--text);
-            position: relative;
-        }
+        body { font-family: 'Inter', sans-serif; background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 50%, #a5d6a7 100%); min-height: 100vh; color: var(--text); position: relative; }
         .bg-shapes { position: fixed; top: 0; left: 0; width: 100%; height: 100%; overflow: hidden; z-index: 0; pointer-events: none; }
         .shape { position: absolute; border-radius: 50%; opacity: 0.08; animation: float 25s infinite ease-in-out; }
         .shape-1 { width: 500px; height: 500px; background: var(--primary); top: -150px; right: -150px; }
         .shape-2 { width: 300px; height: 300px; background: var(--primary); bottom: -100px; left: -100px; animation-delay: -8s; }
         .shape-3 { width: 200px; height: 200px; background: var(--primary); top: 50%; left: 50%; transform: translate(-50%, -50%); animation-delay: -15s; }
-        @keyframes float {
-            0%, 100% { transform: translate(0, 0) scale(1); }
-            25% { transform: translate(60px, -60px) scale(1.1); }
-            50% { transform: translate(-40px, 40px) scale(0.9); }
-            75% { transform: translate(30px, 30px) scale(1.05); }
-        }
+        @keyframes float { 0%, 100% { transform: translate(0, 0) scale(1); } 25% { transform: translate(60px, -60px) scale(1.1); } 50% { transform: translate(-40px, 40px) scale(0.9); } 75% { transform: translate(30px, 30px) scale(1.05); } }
         
         .topbar { position: relative; z-index: 10; background: var(--glass-bg); backdrop-filter: blur(20px); border-bottom: 1px solid var(--glass-border); padding: 10px 30px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); }
         .topbar .logo-mark { display: flex; align-items: center; gap: 12px; font-weight: 800; font-size: 20px; color: var(--primary-dark); text-decoration: none; }
@@ -517,13 +437,10 @@ if ($is_assembly_division) {
         .page-header .controls .hours-label { font-size: 13px; font-weight: 600; color: var(--text-dark); }
         .btn { padding: 7px 16px; border: none; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer; transition: all 0.3s; font-family: 'Inter', sans-serif; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
         .btn-back { background: rgba(255,255,255,0.5); color: var(--text-dark); border: 1px solid var(--glass-border); }
-        .btn-back:hover { background: rgba(255,255,255,0.8); }
         .btn-refresh { background: rgba(255,255,255,0.5); color: var(--text-dark); border: 1px solid var(--glass-border); }
-        .btn-refresh:hover { background: rgba(255,255,255,0.8); }
         .btn-save { background: var(--primary); color: #fff; }
         .btn-save:hover { background: var(--primary-dark); transform: translateY(-1px); box-shadow: 0 4px 15px rgba(33,115,70,0.3); }
         .btn-export { background: rgba(255,255,255,0.5); color: var(--text-dark); border: 1px solid var(--glass-border); }
-        .btn-export:hover { background: rgba(255,255,255,0.8); }
         
         .back-button { display: inline-flex; align-items: center; gap: 8px; padding: 8px 18px; background: var(--glass-bg); backdrop-filter: blur(20px); border: 1px solid var(--glass-border); border-radius: 10px; color: var(--text-dark); text-decoration: none; font-weight: 600; font-size: 14px; transition: all 0.3s ease; margin-bottom: 20px; }
         .back-button:hover { background: rgba(255,255,255,0.3); transform: translateX(-4px); box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
@@ -546,6 +463,8 @@ if ($is_assembly_division) {
         .excel-table .readonly-cell input { background: rgba(200, 200, 200, 0.15); cursor: not-allowed; }
         .excel-table .match-out-row { background: rgba(33,115,70,0.08); font-weight: 600; }
         .excel-table .match-out-row td { background: rgba(33,115,70,0.08); }
+        .excel-table .match-out-row .editable-yellow { background: rgba(255, 235, 59, 0.3); }
+        .excel-table .match-out-row .editable-yellow input { background: rgba(255, 235, 59, 0.3); }
         .excel-table .dhu-row { background: var(--dhu-bg); color: var(--dhu-red); font-weight: 700; }
         .excel-table .dhu-row td { background: var(--dhu-bg); color: var(--dhu-red); border-color: rgba(220, 53, 69, 0.2); }
         .excel-table .total-row { background: rgba(33, 150, 243, 0.1); font-weight: 700; }
@@ -577,8 +496,6 @@ if ($is_assembly_division) {
             .excel-table th, .excel-table td { padding: 3px 2px; }
             .excel-table .editable-yellow input { min-width: 30px; font-size: 10px; }
             .topnav a { padding: 6px 12px; font-size: 13px; }
-            .topbar .logo-mark .logo-icon { width: 32px; height: 32px; font-size: 14px; }
-            .topbar .logo-mark .logo-text { font-size: 16px; }
         }
     </style>
 </head>
@@ -628,7 +545,6 @@ if ($is_assembly_division) {
 
         <div class="scroll-indicator">⬅️ Scroll horizontally to view all columns ➡️</div>
 
-        <!-- MAIN TABLE -->
         <div class="table-container">
             <div class="table-title">
                 <span>📋 <?php echo htmlspecialchars($division_name); ?></span>
@@ -725,10 +641,10 @@ if ($is_assembly_division) {
                         <td class="editable-yellow"><input type="number" class="hour-input" data-hour="<?php echo $h; ?>" value="<?php echo $data["hour_$h"] ?? 0; ?>"></td>
                         <?php endfor; ?>
                         <td class="calculated day-total" id="dt-<?php echo $comp['id']; ?>" style="font-weight:700;"><?php echo number_format($day_total, 0); ?></td>
-                        <td class="calculated ern-minutes" id="em-<?php echo $comp['id']; ?>" style="font-weight:700;"><?php echo number_format($ern_minutes, 1); ?></td>
-                        <td class="calculated acvd-eff" id="ae-<?php echo $comp['id']; ?>" style="font-weight:700; color:<?php echo ($acvd_eff * 100) >= 70 ? '#28a745' : (($acvd_eff * 100) >= 50 ? '#f57c00' : '#dc3545'); ?>;"><?php echo number_format($acvd_eff * 100, 1); ?>%</td>
+                        <td class="calculated ern-minutes" id="em-<?php echo $comp['id']; ?>" style="font-weight:700;"><?php echo round($ern_minutes); ?></td>
+                        <td class="calculated acvd-eff" id="ae-<?php echo $comp['id']; ?>" style="font-weight:700; color:<?php echo ($acvd_eff * 100) >= 70 ? '#28a745' : (($acvd_eff * 100) >= 50 ? '#f57c00' : '#dc3545'); ?>;"><?php echo round($acvd_eff * 100); ?>%</td>
                         <td class="editable-yellow"><input type="number" step="0.1" class="epm-input" data-field="epm" value="<?php echo number_format($epm, 1); ?>"></td>
-                        <td class="calculated profit-value" id="profit-<?php echo $comp['id']; ?>" style="font-weight:700; color:<?php echo $profit >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo number_format($profit, 2); ?></td>
+                        <td class="calculated profit-value" id="profit-<?php echo $comp['id']; ?>" style="font-weight:700; color:<?php echo $profit >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo round($profit); ?></td>
                     </tr>
                     <?php if ($is_assembly_division): ?>
                     <tr class="assembly-dhu-row" data-dhu-for="<?php echo $comp['id']; ?>">
@@ -769,6 +685,7 @@ if ($is_assembly_division) {
                         $acvd_eff = $knit_data['acvd_eff'] ?? 0;
                         $profit = $knit_data['profit'] ?? 0;
                         $style_epm = $knit_data['style_epm'] ?? 13.2;
+                        $knit_tac = $knit_data['unit_carder'] ?? 0;
                     ?>
                     <tr data-component="<?php echo $knit_comp_id; ?>" data-isassembly="1" data-compname="KNIT">
                         <td>Assembly</td>
@@ -776,7 +693,7 @@ if ($is_assembly_division) {
                         <td class="editable-yellow"><input type="number" step="0.01" class="field-input" data-field="ttl_sam_pc" value="<?php echo $knit_data['ttl_sam_pc'] ?? 0; ?>"></td>
                         <td class="editable-yellow"><input type="number" step="0.01" class="field-input" data-field="unit_smv" value="<?php echo number_format($knit_data['unit_smv'] ?? 0, 2, '.', ''); ?>"></td>
                         <td class="editable-yellow"><input type="number" class="field-input" data-field="unit_carder" value="<?php echo $knit_data['unit_carder'] ?? 0; ?>"></td>
-                        <td class="calculated total-carder-col total-assemble-carder">0</td>
+                        <td class="calculated total-carder-col total-assemble-carder"><?php echo $knit_tac; ?></td>
                         <td class="editable-yellow"><input type="number" step="0.5" class="field-input" data-field="plan_hours" value="<?php echo $knit_data['plan_hours'] ?? 0; ?>"></td>
                         <td class="editable-yellow"><input type="number" step="0.5" class="field-input" data-field="worked_hours" value="<?php echo $knit_data['worked_hours'] ?? $work_hours; ?>"></td>
                         <td class="calculated avail-minutes"><?php echo number_format($knit_data['available_minutes'] ?? 0, 0); ?></td>
@@ -785,10 +702,10 @@ if ($is_assembly_division) {
                         <td class="editable-yellow"><input type="number" class="hour-input" data-hour="<?php echo $h; ?>" value="<?php echo $knit_data["hour_$h"] ?? 0; ?>"></td>
                         <?php endfor; ?>
                         <td class="calculated day-total" style="font-weight:700;"><?php echo number_format($day_total, 0); ?></td>
-                        <td class="calculated ern-minutes" style="font-weight:700;"><?php echo number_format($ern_minutes, 1); ?></td>
-                        <td class="calculated acvd-eff" style="font-weight:700; color:<?php echo ($acvd_eff * 100) >= 70 ? '#28a745' : (($acvd_eff * 100) >= 50 ? '#f57c00' : '#dc3545'); ?>;"><?php echo number_format($acvd_eff * 100, 1); ?>%</td>
+                        <td class="calculated ern-minutes" style="font-weight:700;"><?php echo round($ern_minutes); ?></td>
+                        <td class="calculated acvd-eff" style="font-weight:700; color:<?php echo ($acvd_eff * 100) >= 70 ? '#28a745' : (($acvd_eff * 100) >= 50 ? '#f57c00' : '#dc3545'); ?>;"><?php echo round($acvd_eff * 100); ?>%</td>
                         <td class="editable-yellow"><input type="number" step="0.1" class="style-epm-input" data-field="style_epm" value="<?php echo number_format($style_epm, 1); ?>"></td>
-                        <td class="calculated profit-value" style="font-weight:700; color:<?php echo $profit >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo number_format($profit, 2); ?></td>
+                        <td class="calculated profit-value" style="font-weight:700; color:<?php echo $profit >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo round($profit); ?></td>
                     </tr>
                     <tr class="assembly-dhu-row">
                         <td colspan="2" style="font-weight:700; color:var(--dhu-red);">DHU %</td>
@@ -803,31 +720,56 @@ if ($is_assembly_division) {
                     </tr>
                     <?php endif; ?>
                     
-                    <!-- MATCH OUT ROW (Non-Assembly) -->
-                    <?php if (!$is_assembly_division && !empty($match_out)): ?>
-                    <tr class="match-out-row" id="matchOutRow">
+                    <!-- MATCH OUT ROW (EDITABLE) -->
+                    <?php if (!$is_assembly_division && !empty($match_out)): 
+                        $mo_total = 0;
+                        for ($h = 1; $h <= $work_hours; $h++) {
+                            $mo_total += $match_out_hours[$h] ?? 0;
+                        }
+                        $mo_unit_smv = (float)($match_out['unit_smv'] ?? 0);
+                        $mo_unit_carder = (int)($match_out['unit_carder'] ?? 0);
+                        $mo_plan_hours = (float)($match_out['plan_hours'] ?? 0);
+                        $mo_worked_hours = (float)($match_out['worked_hours'] ?? 0);
+                        $mo_ern_minutes = $mo_total * $mo_unit_smv;
+                        $mo_available_minutes = $mo_unit_carder * $mo_plan_hours * 60;
+                        
+                        $mo_denominator = 1;
+                        if ($mo_available_minutes > 0 && $mo_plan_hours > 0) {
+                            $mo_denominator = ($mo_available_minutes / $mo_plan_hours) * $mo_worked_hours;
+                        }
+                        $mo_acvd_eff = ($mo_denominator > 0) ? ($mo_ern_minutes / $mo_denominator) : 0;
+                        
+                        // ============================================================
+                        // MATCH OUT PROFIT = SUM OF ALL COMPONENT PROFITS ABOVE
+                        // Using a NEW variable name to bypass any cached values
+                        // ============================================================
+                        $match_out_summed_profit = 0;
+                        foreach ($components as $c) {
+                            if ($c['is_match_out']) continue;
+                            if (isset($component_data[$c['id']]['profit'])) {
+                                $match_out_summed_profit += (float)$component_data[$c['id']]['profit'];
+                            }
+                        }
+                        $mo_profit = $match_out_summed_profit;
+                    ?>
+                    <tr class="match-out-row" id="matchOutRow" data-component="999" data-isassembly="0" data-compname="MATCH OUT">
                         <td colspan="2" style="font-weight:700;">Match Out</td>
                         <td style="font-weight:700;" id="mo-ttl-sam"><?php echo number_format($match_out['ttl_sam'] ?? 0, 4); ?></td>
-                        <td style="font-weight:700;" id="mo-unit-smv"><?php echo number_format($match_out['unit_smv'] ?? 0, 2); ?></td>
-                        <td style="font-weight:700;" id="mo-unit-carder"><?php echo $match_out['unit_carder'] ?? 0; ?></td>
-                        <td style="font-weight:700;" id="mo-plan-hours"><?php echo number_format($match_out['plan_hours'] ?? 0, 1); ?></td>
-                        <td style="font-weight:700;" id="mo-worked-hours"><?php echo number_format($match_out['worked_hours'] ?? 0, 1); ?></td>
-                        <td class="calculated" id="mo-available-minutes"><?php echo number_format($match_out['available_minutes'] ?? 0, 0); ?></td>
+                        <td style="font-weight:700;" id="mo-unit-smv"><?php echo number_format($mo_unit_smv, 2); ?></td>
+                        <td style="font-weight:700;" id="mo-unit-carder"><?php echo $mo_unit_carder; ?></td>
+                        <td style="font-weight:700;" id="mo-plan-hours"><?php echo number_format($mo_plan_hours, 1); ?></td>
+                        <td style="font-weight:700;" id="mo-worked-hours"><?php echo number_format($mo_worked_hours, 1); ?></td>
+                        <td class="calculated" id="mo-available-minutes"><?php echo number_format($mo_available_minutes, 0); ?></td>
                         <td class="calculated" id="mo-target-100"><?php echo number_format($match_out['target_100'] ?? 0, 0); ?></td>
-                        <?php 
-                        $mo_total = 0;
-                        for ($h = 1; $h <= $work_hours; $h++): 
-                            $mo_total += $match_out['hours'][$h] ?? 0;
-                        ?>
-                        <td id="mo-hour-<?php echo $h; ?>"><?php echo number_format($match_out['hours'][$h] ?? 0, 0); ?></td>
+                        <?php for ($h = 1; $h <= $work_hours; $h++): ?>
+                        <td class="editable-yellow"><input type="number" class="hour-input mo-hour-input" data-hour="<?php echo $h; ?>" value="<?php echo $match_out_hours[$h] ?? 0; ?>"></td>
                         <?php endfor; ?>
                         <td style="font-weight:700;" id="mo-day-total"><?php echo number_format($mo_total, 0); ?></td>
-                        <td style="font-weight:700;" id="mo-ern-minutes"><?php echo number_format($match_out['earned_minutes'] ?? 0, 1); ?></td>
-                        <td style="font-weight:700; color:var(--primary);" id="mo-acvd-eff">
-                            <?php echo number_format(($match_out['acvd_eff'] ?? 0) * 100, 1); ?>%
-                        </td>
-                        <td class="editable-yellow"><input type="number" step="0.1" class="epm-input" data-field="epm" value="13.2"></td>
-                        <td class="calculated" id="mo-profit" style="font-weight:700;"><?php echo number_format(0, 2); ?></td>
+                        <td style="font-weight:700;" id="mo-ern-minutes"><?php echo round($mo_ern_minutes); ?></td>
+                        <td style="font-weight:700; color:var(--primary);" id="mo-acvd-eff"><?php echo round($mo_acvd_eff * 100); ?>%</td>
+                        <td class="editable-yellow"><input type="number" step="0.1" class="epm-input" data-field="epm" value="13.2" id="mo-epm"></td>
+                        <td class="calculated" id="mo-profit" style="font-weight:700; color:<?php echo $mo_profit >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo round($mo_profit); ?></td>
+                        <!-- DEBUG mo_profit = <?php echo $mo_profit; ?> | count component_data = <?php echo count($component_data); ?> | summed = <?php echo $match_out_summed_profit ?? 'N/A'; ?> -->
                     </tr>
                     
                     <tr class="dhu-row" id="dhuRow">
@@ -858,11 +800,11 @@ if ($is_assembly_division) {
                             Total / <?php echo htmlspecialchars($division_name); ?>:
                         </td>
                         <td style="font-weight:700;"><?php echo number_format($total_day_ttl, 0); ?></td>
-                        <td style="font-weight:700;"><?php echo number_format($total_ern_min, 1); ?></td>
+                        <td style="font-weight:700;"><?php echo round($total_ern_min); ?></td>
                         <td style="font-weight:700; color:var(--primary);">
                             <?php 
-                            $avg_eff = $row_idx > 0 ? round(($total_eff / $row_idx) * 100, 1) : 0;
-                            echo number_format($avg_eff, 1) . '%';
+                            $avg_eff = $row_idx > 0 ? round(($total_eff / $row_idx) * 100) : 0;
+                            echo $avg_eff . '%';
                             ?>
                         </td>
                         <td>—</td>
@@ -875,11 +817,8 @@ if ($is_assembly_division) {
                     <?php if (!$is_assembly_division): ?>
                     
                         <?php if ($division_name === 'Shirt'): ?>
-                        
                         <tr class="section-divider">
-                            <td colspan="<?php echo 11 + $work_hours; ?>" style="text-align:center; font-weight:700; color:var(--primary);">
-                                ─── ASSEMBLY ───
-                            </td>
+                            <td colspan="<?php echo 11 + $work_hours; ?>" style="text-align:center; font-weight:700; color:var(--primary);">─── ASSEMBLY ───</td>
                         </tr>
                         
                         <?php if (!empty($assembly_shirt_row)): 
@@ -888,11 +827,6 @@ if ($is_assembly_division) {
                             foreach ($assembly_components as $comp) {
                                 if ($comp['name'] === 'SHIRT') { $comp_id = $comp['id']; break; }
                             }
-                            $day_total = $data['day_total'] ?? 0;
-                            $ern_minutes = $data['ern_minutes'] ?? 0;
-                            $acvd_eff = $data['acvd_eff'] ?? 0;
-                            $profit = $data['profit'] ?? 0;
-                            $style_epm = $data['style_epm'] ?? 13.2;
                         ?>
                         <tr data-component="<?php echo $comp_id; ?>" data-isassembly="1" data-compname="SHIRT">
                             <td>Assembly</td>
@@ -905,11 +839,11 @@ if ($is_assembly_division) {
                             <?php for ($h = 1; $h <= $work_hours; $h++): ?>
                             <td class="editable-yellow"><input type="number" class="hour-input" data-hour="<?php echo $h; ?>" value="<?php echo $data["hour_$h"] ?? 0; ?>"></td>
                             <?php endfor; ?>
-                            <td class="calculated day-total" style="font-weight:700;"><?php echo number_format($day_total, 0); ?></td>
-                            <td class="calculated ern-minutes" style="font-weight:700;"><?php echo number_format($ern_minutes, 1); ?></td>
-                            <td class="calculated acvd-eff" style="font-weight:700; color:<?php echo ($acvd_eff * 100) >= 70 ? '#28a745' : (($acvd_eff * 100) >= 50 ? '#f57c00' : '#dc3545'); ?>;"><?php echo number_format($acvd_eff * 100, 1); ?>%</td>
-                            <td class="editable-yellow"><input type="number" step="0.1" class="style-epm-input" data-field="style_epm" value="<?php echo number_format($style_epm, 1); ?>"></td>
-                            <td class="calculated profit-value" style="font-weight:700; color:<?php echo $profit >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo number_format($profit, 2); ?></td>
+                            <td class="calculated day-total" style="font-weight:700;"><?php echo number_format($data['day_total'] ?? 0, 0); ?></td>
+                            <td class="calculated ern-minutes" style="font-weight:700;"><?php echo round($data['ern_minutes'] ?? 0); ?></td>
+                            <td class="calculated acvd-eff" style="font-weight:700; color:<?php echo (($data['acvd_eff'] ?? 0) * 100) >= 70 ? '#28a745' : ((($data['acvd_eff'] ?? 0) * 100) >= 50 ? '#f57c00' : '#dc3545'); ?>;"><?php echo round(($data['acvd_eff'] ?? 0) * 100); ?>%</td>
+                            <td class="editable-yellow"><input type="number" step="0.1" class="style-epm-input" data-field="style_epm" value="<?php echo number_format($data['style_epm'] ?? 13.2, 1); ?>"></td>
+                            <td class="calculated profit-value" style="font-weight:700; color:<?php echo ($data['profit'] ?? 0) >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo round($data['profit'] ?? 0); ?></td>
                         </tr>
                         <?php endif; ?>
                         
@@ -919,11 +853,6 @@ if ($is_assembly_division) {
                             foreach ($assembly_components as $comp) {
                                 if ($comp['name'] === 'SHIRT MTM') { $comp_id = $comp['id']; break; }
                             }
-                            $day_total = $data['day_total'] ?? 0;
-                            $ern_minutes = $data['ern_minutes'] ?? 0;
-                            $acvd_eff = $data['acvd_eff'] ?? 0;
-                            $profit = $data['profit'] ?? 0;
-                            $style_epm = $data['style_epm'] ?? 13.2;
                         ?>
                         <tr data-component="<?php echo $comp_id; ?>" data-isassembly="1" data-compname="SHIRT MTM">
                             <td>Assembly</td>
@@ -936,22 +865,19 @@ if ($is_assembly_division) {
                             <?php for ($h = 1; $h <= $work_hours; $h++): ?>
                             <td class="editable-yellow"><input type="number" class="hour-input" data-hour="<?php echo $h; ?>" value="<?php echo $data["hour_$h"] ?? 0; ?>"></td>
                             <?php endfor; ?>
-                            <td class="calculated day-total" style="font-weight:700;"><?php echo number_format($day_total, 0); ?></td>
-                            <td class="calculated ern-minutes" style="font-weight:700;"><?php echo number_format($ern_minutes, 1); ?></td>
-                            <td class="calculated acvd-eff" style="font-weight:700; color:<?php echo ($acvd_eff * 100) >= 70 ? '#28a745' : (($acvd_eff * 100) >= 50 ? '#f57c00' : '#dc3545'); ?>;"><?php echo number_format($acvd_eff * 100, 1); ?>%</td>
-                            <td class="editable-yellow"><input type="number" step="0.1" class="style-epm-input" data-field="style_epm" value="<?php echo number_format($style_epm, 1); ?>"></td>
-                            <td class="calculated profit-value" style="font-weight:700; color:<?php echo $profit >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo number_format($profit, 2); ?></td>
+                            <td class="calculated day-total" style="font-weight:700;"><?php echo number_format($data['day_total'] ?? 0, 0); ?></td>
+                            <td class="calculated ern-minutes" style="font-weight:700;"><?php echo round($data['ern_minutes'] ?? 0); ?></td>
+                            <td class="calculated acvd-eff" style="font-weight:700; color:<?php echo (($data['acvd_eff'] ?? 0) * 100) >= 70 ? '#28a745' : ((($data['acvd_eff'] ?? 0) * 100) >= 50 ? '#f57c00' : '#dc3545'); ?>;"><?php echo round(($data['acvd_eff'] ?? 0) * 100); ?>%</td>
+                            <td class="editable-yellow"><input type="number" step="0.1" class="style-epm-input" data-field="style_epm" value="<?php echo number_format($data['style_epm'] ?? 13.2, 1); ?>"></td>
+                            <td class="calculated profit-value" style="font-weight:700; color:<?php echo ($data['profit'] ?? 0) >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo round($data['profit'] ?? 0); ?></td>
                         </tr>
                         <?php endif; ?>
                         
                         <?php endif; ?>
                         
                         <?php if ($division_name === 'Trouser'): ?>
-                        
                         <tr class="section-divider">
-                            <td colspan="<?php echo 11 + $work_hours; ?>" style="text-align:center; font-weight:700; color:var(--primary);">
-                                ─── ASSEMBLY ───
-                            </td>
+                            <td colspan="<?php echo 11 + $work_hours; ?>" style="text-align:center; font-weight:700; color:var(--primary);">─── ASSEMBLY ───</td>
                         </tr>
                         
                         <?php if (!empty($assembly_trouser_row)): 
@@ -960,11 +886,6 @@ if ($is_assembly_division) {
                             foreach ($assembly_components as $comp) {
                                 if ($comp['name'] === 'TROUSER') { $comp_id = $comp['id']; break; }
                             }
-                            $day_total = $data['day_total'] ?? 0;
-                            $ern_minutes = $data['ern_minutes'] ?? 0;
-                            $acvd_eff = $data['acvd_eff'] ?? 0;
-                            $profit = $data['profit'] ?? 0;
-                            $style_epm = $data['style_epm'] ?? 13.2;
                         ?>
                         <tr data-component="<?php echo $comp_id; ?>" data-isassembly="1" data-compname="TROUSER">
                             <td>Assembly</td>
@@ -977,11 +898,11 @@ if ($is_assembly_division) {
                             <?php for ($h = 1; $h <= $work_hours; $h++): ?>
                             <td class="editable-yellow"><input type="number" class="hour-input" data-hour="<?php echo $h; ?>" value="<?php echo $data["hour_$h"] ?? 0; ?>"></td>
                             <?php endfor; ?>
-                            <td class="calculated day-total" style="font-weight:700;"><?php echo number_format($day_total, 0); ?></td>
-                            <td class="calculated ern-minutes" style="font-weight:700;"><?php echo number_format($ern_minutes, 1); ?></td>
-                            <td class="calculated acvd-eff" style="font-weight:700; color:<?php echo ($acvd_eff * 100) >= 70 ? '#28a745' : (($acvd_eff * 100) >= 50 ? '#f57c00' : '#dc3545'); ?>;"><?php echo number_format($acvd_eff * 100, 1); ?>%</td>
-                            <td class="editable-yellow"><input type="number" step="0.1" class="style-epm-input" data-field="style_epm" value="<?php echo number_format($style_epm, 1); ?>"></td>
-                            <td class="calculated profit-value" style="font-weight:700; color:<?php echo $profit >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo number_format($profit, 2); ?></td>
+                            <td class="calculated day-total" style="font-weight:700;"><?php echo number_format($data['day_total'] ?? 0, 0); ?></td>
+                            <td class="calculated ern-minutes" style="font-weight:700;"><?php echo round($data['ern_minutes'] ?? 0); ?></td>
+                            <td class="calculated acvd-eff" style="font-weight:700; color:<?php echo (($data['acvd_eff'] ?? 0) * 100) >= 70 ? '#28a745' : ((($data['acvd_eff'] ?? 0) * 100) >= 50 ? '#f57c00' : '#dc3545'); ?>;"><?php echo round(($data['acvd_eff'] ?? 0) * 100); ?>%</td>
+                            <td class="editable-yellow"><input type="number" step="0.1" class="style-epm-input" data-field="style_epm" value="<?php echo number_format($data['style_epm'] ?? 13.2, 1); ?>"></td>
+                            <td class="calculated profit-value" style="font-weight:700; color:<?php echo ($data['profit'] ?? 0) >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo round($data['profit'] ?? 0); ?></td>
                         </tr>
                         <?php endif; ?>
                         
@@ -991,11 +912,6 @@ if ($is_assembly_division) {
                             foreach ($assembly_components as $comp) {
                                 if ($comp['name'] === 'TROUSER MTM') { $comp_id = $comp['id']; break; }
                             }
-                            $day_total = $data['day_total'] ?? 0;
-                            $ern_minutes = $data['ern_minutes'] ?? 0;
-                            $acvd_eff = $data['acvd_eff'] ?? 0;
-                            $profit = $data['profit'] ?? 0;
-                            $style_epm = $data['style_epm'] ?? 13.2;
                         ?>
                         <tr data-component="<?php echo $comp_id; ?>" data-isassembly="1" data-compname="TROUSER MTM">
                             <td>Assembly</td>
@@ -1008,11 +924,11 @@ if ($is_assembly_division) {
                             <?php for ($h = 1; $h <= $work_hours; $h++): ?>
                             <td class="editable-yellow"><input type="number" class="hour-input" data-hour="<?php echo $h; ?>" value="<?php echo $data["hour_$h"] ?? 0; ?>"></td>
                             <?php endfor; ?>
-                            <td class="calculated day-total" style="font-weight:700;"><?php echo number_format($day_total, 0); ?></td>
-                            <td class="calculated ern-minutes" style="font-weight:700;"><?php echo number_format($ern_minutes, 1); ?></td>
-                            <td class="calculated acvd-eff" style="font-weight:700; color:<?php echo ($acvd_eff * 100) >= 70 ? '#28a745' : (($acvd_eff * 100) >= 50 ? '#f57c00' : '#dc3545'); ?>;"><?php echo number_format($acvd_eff * 100, 1); ?>%</td>
-                            <td class="editable-yellow"><input type="number" step="0.1" class="style-epm-input" data-field="style_epm" value="<?php echo number_format($style_epm, 1); ?>"></td>
-                            <td class="calculated profit-value" style="font-weight:700; color:<?php echo $profit >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo number_format($profit, 2); ?></td>
+                            <td class="calculated day-total" style="font-weight:700;"><?php echo number_format($data['day_total'] ?? 0, 0); ?></td>
+                            <td class="calculated ern-minutes" style="font-weight:700;"><?php echo round($data['ern_minutes'] ?? 0); ?></td>
+                            <td class="calculated acvd-eff" style="font-weight:700; color:<?php echo (($data['acvd_eff'] ?? 0) * 100) >= 70 ? '#28a745' : ((($data['acvd_eff'] ?? 0) * 100) >= 50 ? '#f57c00' : '#dc3545'); ?>;"><?php echo round(($data['acvd_eff'] ?? 0) * 100); ?>%</td>
+                            <td class="editable-yellow"><input type="number" step="0.1" class="style-epm-input" data-field="style_epm" value="<?php echo number_format($data['style_epm'] ?? 13.2, 1); ?>"></td>
+                            <td class="calculated profit-value" style="font-weight:700; color:<?php echo ($data['profit'] ?? 0) >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo round($data['profit'] ?? 0); ?></td>
                         </tr>
                         <?php endif; ?>
                         
@@ -1038,10 +954,10 @@ if ($is_assembly_division) {
                         <td style="font-weight:700;" id="lt-hour-<?php echo $h; ?>"><?php echo number_format($lean_total['hours'][$h] ?? 0, 0); ?></td>
                         <?php endfor; ?>
                         <td style="font-weight:700;" id="lt-day-total"><?php echo number_format($lean_total['day_total'] ?? 0, 0); ?></td>
-                        <td style="font-weight:700;" id="lt-ern-minutes"><?php echo number_format($lean_total['ern_minutes'] ?? 0, 1); ?></td>
-                        <td style="font-weight:700; color:var(--primary);" id="lt-acvd-eff"><?php echo number_format(($lean_total['acvd_eff'] ?? 0) * 100, 1); ?>%</td>
+                        <td style="font-weight:700;" id="lt-ern-minutes"><?php echo round($lean_total['ern_minutes'] ?? 0); ?></td>
+                        <td style="font-weight:700; color:var(--primary);" id="lt-acvd-eff"><?php echo round(($lean_total['acvd_eff'] ?? 0) * 100); ?>%</td>
                         <td>—</td>
-                        <td style="font-weight:700;" id="lt-profit"><?php echo number_format((500 * ($lean_total['day_total'] ?? 0)) - (7365 * (($lean_total['assemble_carder'] ?? 0) + ($shirt_match_out['unit_carder'] ?? 0))), 2); ?></td>
+                        <td style="font-weight:700;" id="lt-profit"><?php echo round((500 * ($lean_total['day_total'] ?? 0)) - (7365 * (($lean_total['assemble_carder'] ?? 0) + ($shirt_match_out['unit_carder'] ?? 0)))); ?></td>
                     </tr>
                     
                     <tr class="dhu-row">
@@ -1080,10 +996,10 @@ if ($is_assembly_division) {
                         <td style="font-weight:800;" id="gt-hour-<?php echo $h; ?>"><?php echo number_format($grand_total['hours'][$h] ?? 0, 4); ?></td>
                         <?php endfor; ?>
                         <td style="font-weight:800;" id="gt-day-total"><?php echo number_format($grand_total['day_total'] ?? 0, 0); ?></td>
-                        <td style="font-weight:800;" id="gt-ern-minutes"><?php echo number_format($grand_total['ern_minutes'] ?? 0, 1); ?></td>
-                        <td style="font-weight:800;" id="gt-acvd-eff"><?php echo number_format(($grand_total['acvd_eff'] ?? 0) * 100, 1); ?>%</td>
+                        <td style="font-weight:800;" id="gt-ern-minutes"><?php echo round($grand_total['ern_minutes'] ?? 0); ?></td>
+                        <td style="font-weight:800;" id="gt-acvd-eff"><?php echo round(($grand_total['acvd_eff'] ?? 0) * 100); ?>%</td>
                         <td>—</td>
-                        <td style="font-weight:800;" id="gt-profit"><?php echo number_format((500 * ($grand_total['day_total'] ?? 0)) - (7365 * (($grand_total['assemble_carder'] ?? 0) + 0)), 2); ?></td>
+                        <td style="font-weight:800;" id="gt-profit"><?php echo round((500 * ($grand_total['day_total'] ?? 0)) - (7365 * (($grand_total['assemble_carder'] ?? 0) + 0))); ?></td>
                     </tr>
                     <?php endif; ?>
                     <?php endif; ?>
@@ -1119,11 +1035,154 @@ if ($is_assembly_division) {
             window.location.href = '?id=<?php echo $division_id; ?>&date=' + date + '&hours=' + hours;
         }
 
+        function rnd(val) {
+            return Math.round(val);
+        }
+
+        // ============================================================
+        // DEBOUNCED AUTO-SAVE
+        // ============================================================
+        var saveTimeouts = {};
+        
+        function scheduleAutoSave(key, fn) {
+            if (saveTimeouts[key]) {
+                clearTimeout(saveTimeouts[key]);
+            }
+            saveTimeouts[key] = setTimeout(function() {
+                fn();
+                delete saveTimeouts[key];
+            }, 400); // 400ms after user stops typing
+        }
+        
+        // Visual "saving" indicator
+        function showSavingIndicator() {
+            var el = $('#save-indicator');
+            if (el.length === 0) {
+                $('<div id="save-indicator" style="position:fixed;bottom:20px;right:20px;padding:8px 16px;background:rgba(33,115,70,0.9);color:#fff;border-radius:8px;font-size:13px;font-weight:600;z-index:9999;box-shadow:0 4px 15px rgba(0,0,0,0.2);">💾 Saving...</div>').appendTo('body');
+            } else {
+                el.stop(true, true).fadeIn(150);
+            }
+        }
+        
+        function hideSavingIndicator() {
+            setTimeout(function() {
+                $('#save-indicator').fadeOut(300);
+            }, 200);
+        }
+
+        // ============================================================
+        // FIXED: sumComponentProfits() - now EXCLUDES assembly rows
+        // ============================================================
+        function sumComponentProfits() {
+            var total = 0;
+            $('#mainTable tbody tr').each(function() {
+                var r = $(this);
+                // Skip special rows
+                if (r.hasClass('match-out-row') || r.hasClass('dhu-row') || 
+                    r.hasClass('total-row') || r.hasClass('lean-total-row') || 
+                    r.hasClass('grand-total-row') || r.hasClass('assembly-dhu-row') || 
+                    r.hasClass('section-divider')) {
+                    return;
+                }
+                // Skip assembly rows (they are NOT part of this division's components)
+                if (String(r.attr('data-isassembly')) === '1') {
+                    return;
+                }
+                total += parseFloat(r.find('.profit-value').text()) || 0;
+            });
+            return total;
+        }
+
+        function updateMatchOutProfit() {
+            var matchOutRow = $('#matchOutRow');
+            if (matchOutRow.length === 0) return;
+            var moProfit = sumComponentProfits();
+            matchOutRow.find('#mo-profit').text(rnd(moProfit));
+            matchOutRow.find('#mo-profit').css('color', moProfit >= 0 ? '#28a745' : '#dc3545');
+        }
+
+        function recalcMatchOutRow() {
+            var row = $('#matchOutRow');
+            if (row.length === 0) return;
+            
+            var hours = parseInt($('#workHours').val()) || 10;
+            var dayTotal = 0;
+            var hourValues = {};
+            for (var h = 1; h <= hours; h++) {
+                var val = parseFloat(row.find('.mo-hour-input[data-hour="' + h + '"]').val()) || 0;
+                hourValues[h] = val;
+                dayTotal += val;
+            }
+            
+            var unitSmv = parseFloat(row.find('#mo-unit-smv').text().replace(/,/g, '')) || 0;
+            var unitCarder = parseFloat(row.find('#mo-unit-carder').text()) || 0;
+            var planHours = parseFloat(row.find('#mo-plan-hours').text()) || 0;
+            var workedHours = parseFloat(row.find('#mo-worked-hours').text()) || 0;
+            
+            var ernMinutes = dayTotal * unitSmv;
+            var availableMinutes = unitCarder * planHours * 60;
+            
+            var denominator = 1;
+            if (availableMinutes > 0 && planHours > 0) {
+                denominator = (availableMinutes / planHours) * workedHours;
+            }
+            var acvdEff = denominator > 0 ? (ernMinutes / denominator) : 0;
+            
+            var profit = sumComponentProfits();
+            
+            row.find('#mo-day-total').text(Math.round(dayTotal));
+            row.find('#mo-ern-minutes').text(rnd(ernMinutes));
+            row.find('#mo-acvd-eff').text(rnd(acvdEff * 100) + '%');
+            row.find('#mo-profit').text(rnd(profit));
+            row.find('#mo-profit').css('color', profit >= 0 ? '#28a745' : '#dc3545');
+            
+            var date = $('#reportDate').val();
+            var division = <?php echo $division_id; ?>;
+            var data = {
+                ttl_sam_pc: parseFloat(row.find('#mo-ttl-sam').text()) || 0,
+                unit_smv: unitSmv,
+                unit_carder: unitCarder,
+                plan_hours: planHours,
+                worked_hours: workedHours,
+                epm: parseFloat(row.find('#mo-epm').val()) || 13.2,
+                profit: profit
+            };
+            for (var h = 1; h <= 11; h++) {
+                data['hour_' + h] = hourValues[h] || 0;
+            }
+            
+            scheduleAutoSave('save_matchout', function() {
+                showSavingIndicator();
+                $.ajax({
+                    url: 'save_data.php',
+                    type: 'POST',
+                    data: {
+                        action: 'auto_save',
+                        date: date,
+                        division: division,
+                        component: 999,
+                        data: JSON.stringify(data),
+                        work_hours: hours,
+                        is_assembly: '0'
+                    },
+                    dataType: 'json',
+                    success: function() { hideSavingIndicator(); },
+                    error: function() { hideSavingIndicator(); }
+                });
+            });
+            
+            setTimeout(function() { updateSummaryRows(); }, 100);
+        }
+
         function recalcRow(row) {
-            if (row.hasClass('match-out-row') || row.hasClass('lean-total-row') || 
-                row.hasClass('grand-total-row') || row.hasClass('total-row') || 
-                row.hasClass('dhu-row') || row.hasClass('assembly-dhu-row') ||
-                row.hasClass('section-divider')) {
+            if (row.hasClass('lean-total-row') || row.hasClass('grand-total-row') || 
+                row.hasClass('total-row') || row.hasClass('dhu-row') || 
+                row.hasClass('assembly-dhu-row') || row.hasClass('section-divider')) {
+                return;
+            }
+            
+            if (row.hasClass('match-out-row')) {
+                recalcMatchOutRow();
                 return;
             }
             
@@ -1155,11 +1214,7 @@ if ($is_assembly_division) {
             if (isAssembly) {
                 isShirtOrTrouser = (compName === 'SHIRT' || compName === 'TROUSER');
                 
-                // ============================================================
-                // CHANGE 4: Total Assemble Carder
-                // ============================================================
                 if (isShirtOrTrouser) {
-                    // Auto-calc Section SAM/Pc
                     var matchOutSmv = (compName === 'SHIRT') ? SHIRT_MATCH_OUT_SMV : TROUSER_MATCH_OUT_SMV;
                     if (matchOutSmv > 0) {
                         var newSmv = ttlSamPc - matchOutSmv;
@@ -1168,52 +1223,36 @@ if ($is_assembly_division) {
                         row.find('input[data-field="unit_smv"]').val(unitSmv.toFixed(2));
                     }
                     
-                    // Auto-calc Total Assemble Carder
                     var matchOutCarder = (compName === 'SHIRT') ? SHIRT_MATCH_OUT_CARDER : TROUSER_MATCH_OUT_CARDER;
                     totalAssembleCarder = unitCarder + matchOutCarder;
-                    row.find('.total-assemble-carder').text(totalAssembleCarder);
                 } else {
-                    // All other rows: Total Assemble Carder = own Assemble Carder
                     totalAssembleCarder = unitCarder;
-                    row.find('.total-assemble-carder').text(totalAssembleCarder);
                 }
+                
+                row.find('.total-assemble-carder').text(totalAssembleCarder);
                 
                 if (unitSmv > 0 && unitCarder > 0) {
                     dayForecast = (unitCarder * 600 / unitSmv) * 0.80;
                 }
-                
-                // 100% Target: For SHIRT/TROUSER use Section SAM/Pc, for other rows (MTM etc) use TTl SAM/Pcs
-                if (isShirtOrTrouser) {
-                    target100 = (unitSmv > 0) ? (unitCarder / unitSmv) * 60 : 0;
-                } else {
-                    // For MTM, COAT, COAT MTM, KNIT: use TTl SAM/Pcs
-                    target100 = (ttlSamPc > 0) ? (unitCarder / ttlSamPc) * 60 : 0;
-                }
-                
                 planMinutes = dayForecast * unitSmv;
                 planEff = (unitCarder * planHours * 60 > 0) ? (planMinutes / (unitCarder * planHours * 60)) : 0;
                 ernMinutes = dayTotal * ttlSamPc;
                 
                 if (isShirtOrTrouser) {
-                    availableMinutes = totalAssembleCarder * planHours * 60;
-                    
-                    if (availableMinutes > 0 && planHours > 0) {
-                        var denominator = availableMinutes * (workedHours / planHours);
-                        acvdEff = (denominator > 0) ? (ernMinutes / denominator) : 0;
-                    } else {
-                        acvdEff = 0;
-                    }
+                    target100 = (unitSmv > 0) ? (unitCarder / unitSmv) * 60 : 0;
                 } else {
-                    availableMinutes = unitCarder * planHours * 60;
-                    acvdEff = (availableMinutes > 0 && workedHours > 0 && planHours > 0) 
-                        ? (ernMinutes / availableMinutes) * (planHours / workedHours) 
-                        : 0;
+                    target100 = (ttlSamPc > 0) ? (unitCarder / ttlSamPc) * 60 : 0;
                 }
                 
-                // ============================================================
-                // CHANGE 4: Profit multiplier per Assembly row
-                // ============================================================
-                var profitMultiplier = 500; // default for SHIRT
+                availableMinutes = totalAssembleCarder * planHours * 60;
+                if (availableMinutes > 0 && planHours > 0) {
+                    var denominator = availableMinutes * (workedHours / planHours);
+                    acvdEff = (denominator > 0) ? (ernMinutes / denominator) : 0;
+                } else {
+                    acvdEff = 0;
+                }
+                
+                var profitMultiplier = 500;
                 if (compName === 'SHIRT MTM') profitMultiplier = 1100;
                 else if (compName === 'TROUSER') profitMultiplier = 800;
                 else if (compName === 'TROUSER MTM') profitMultiplier = 1500;
@@ -1222,6 +1261,7 @@ if ($is_assembly_division) {
                 else if (compName === 'KNIT') profitMultiplier = 295;
                 
                 profit = (profitMultiplier * dayTotal) - (7365 * totalAssembleCarder);
+                
             } else {
                 if (unitSmv > 0 && unitCarder > 0) {
                     dayForecast = (unitCarder * 600 / unitSmv) * 0.90;
@@ -1231,10 +1271,10 @@ if ($is_assembly_division) {
                 planMinutes = dayForecast * unitSmv;
                 planEff = availableMinutes > 0 ? (planMinutes / availableMinutes) : 0;
                 ernMinutes = dayTotal * unitSmv;
-                var denominator2 = (availableMinutes > 0 && planHours > 0) 
+                var denom2 = (availableMinutes > 0 && planHours > 0) 
                     ? (availableMinutes / planHours) * workedHours 
                     : 1;
-                acvdEff = denominator2 > 0 ? (ernMinutes / denominator2) : 0;
+                acvdEff = denom2 > 0 ? (ernMinutes / denom2) : 0;
                 if (planHours > 0) {
                     profit = (epm * (dayTotal * unitSmv)) - (7365 * unitCarder) * (workedHours / planHours);
                 } else {
@@ -1245,13 +1285,13 @@ if ($is_assembly_division) {
             row.find('.avail-minutes').text(Math.round(availableMinutes));
             row.find('.target-100').text(Math.round(target100));
             row.find('.day-total').text(Math.round(dayTotal));
-            row.find('.ern-minutes').text(ernMinutes.toFixed(1));
+            row.find('.ern-minutes').text(rnd(ernMinutes));
             
             var effPercent = acvdEff * 100;
-            row.find('.acvd-eff').text(effPercent.toFixed(1) + '%');
+            row.find('.acvd-eff').text(rnd(effPercent) + '%');
             row.find('.acvd-eff').css('color', effPercent >= 70 ? '#28a745' : (effPercent >= 50 ? '#f57c00' : '#dc3545'));
             
-            row.find('.profit-value').text(profit.toFixed(2));
+            row.find('.profit-value').text(rnd(profit));
             row.find('.profit-value').css('color', profit >= 0 ? '#28a745' : '#dc3545');
             
             var epmValue = isAssembly ? styleEpm : epm;
@@ -1271,11 +1311,12 @@ if ($is_assembly_division) {
             
             if (isAssembly) {
                 updateAssemblyDHU(compId, dayTotal);
+            } else {
+                // Update Match Out profit whenever any component changes
+                updateMatchOutProfit();
             }
             
-            setTimeout(function() {
-                updateSummaryRows();
-            }, 100);
+            setTimeout(function() { updateSummaryRows(); }, 100);
         }
 
         function autoSave(row, compId, isAssembly, hours, calcData) {
@@ -1296,19 +1337,30 @@ if ($is_assembly_division) {
                 data['hour_' + h] = calcData.hourValues[h] || 0;
             }
             
-            $.ajax({
-                url: 'save_data.php',
-                type: 'POST',
-                data: {
-                    action: 'auto_save',
-                    date: date,
-                    division: division,
-                    component: compId,
-                    data: JSON.stringify(data),
-                    work_hours: hours,
-                    is_assembly: isAssembly ? '1' : '0'
-                },
-                dataType: 'json'
+            // Debounce by component ID (so rapid typing only fires once)
+            var saveKey = 'save_comp_' + compId;
+            scheduleAutoSave(saveKey, function() {
+                showSavingIndicator();
+                $.ajax({
+                    url: 'save_data.php',
+                    type: 'POST',
+                    data: {
+                        action: 'auto_save',
+                        date: date,
+                        division: division,
+                        component: compId,
+                        data: JSON.stringify(data),
+                        work_hours: hours,
+                        is_assembly: isAssembly ? '1' : '0'
+                    },
+                    dataType: 'json',
+                    success: function() {
+                        hideSavingIndicator();
+                    },
+                    error: function() {
+                        hideSavingIndicator();
+                    }
+                });
             });
         }
 
@@ -1325,10 +1377,9 @@ if ($is_assembly_division) {
 
         $(document).on('change input', '.epm-input, .style-epm-input', function() {
             var row = $(this).closest('tr');
-            if (!row.hasClass('match-out-row') && !row.hasClass('lean-total-row') && 
-                !row.hasClass('grand-total-row') && !row.hasClass('total-row') && 
-                !row.hasClass('dhu-row') && !row.hasClass('assembly-dhu-row') &&
-                !row.hasClass('section-divider')) {
+            if (!row.hasClass('lean-total-row') && !row.hasClass('grand-total-row') && 
+                !row.hasClass('total-row') && !row.hasClass('dhu-row') && 
+                !row.hasClass('assembly-dhu-row') && !row.hasClass('section-divider')) {
                 recalcRow(row);
             }
         });
@@ -1383,10 +1434,7 @@ if ($is_assembly_division) {
             var gt = { ttl_sam: lt.ttl_sam, section_sam: lt.section_sam, day_forecast: lt.day_forecast, assemble_carder: 0, plan_hours: 10, worked_hours: 10, available_minutes: 0, plan_minutes: 0, plan_eff: 0, target_100: 0, hours: {}, day_total: 0, ern_minutes: 0, acvd_eff: 0 };
             for (var h = 1; h <= hours; h++) gt.hours[h] = 0;
             
-            var shirtCarder = SHIRT_MATCH_OUT_CARDER;
-            var trouserCarder = TROUSER_MATCH_OUT_CARDER;
-            
-            gt.assemble_carder = lt.assemble_carder + trouserCarder + shirtCarder;
+            gt.assemble_carder = lt.assemble_carder + TROUSER_MATCH_OUT_CARDER + SHIRT_MATCH_OUT_CARDER;
             gt.available_minutes = gt.assemble_carder * gt.plan_hours * 60;
             
             var planMinSum = 0;
@@ -1471,7 +1519,7 @@ if ($is_assembly_division) {
                 var matchOutRow = $('#matchOutRow');
                 if (matchOutRow.length > 0) {
                     var mo = calculateMatchOut(componentRows, hours);
-                    updateMatchOutRow(matchOutRow, mo, hours);
+                    updateMatchOutRowDisplay(matchOutRow, mo, hours);
                     updateDHURow(componentRows, hours);
                     updateTotalRow(componentRows, hours);
                 }
@@ -1528,22 +1576,16 @@ if ($is_assembly_division) {
             return result;
         }
 
-        function updateMatchOutRow(row, data, hours) {
+        function updateMatchOutRowDisplay(row, data, hours) {
             row.find('#mo-unit-smv').text(data.unitSmv.toFixed(2));
             row.find('#mo-unit-carder').text(Math.round(data.unitCarder));
             row.find('#mo-plan-hours').text(data.planHours.toFixed(1));
             row.find('#mo-worked-hours').text(data.workedHours.toFixed(1));
             row.find('#mo-available-minutes').text(Math.round(data.availableMinutes));
             row.find('#mo-target-100').text(Math.round(data.target100));
-            for (var h = 1; h <= hours; h++) {
-                row.find('#mo-hour-' + h).text(Math.round(data.hours[h] || 0));
-            }
-            row.find('#mo-day-total').text(Math.round(data.dayTotal));
-            row.find('#mo-ern-minutes').text(data.ernMinutes.toFixed(1));
-            row.find('#mo-acvd-eff').text((data.acvdEff * 100).toFixed(1) + '%');
             
-            var moProfit = (13.2 * (data.dayTotal * data.unitSmv)) - (7365 * data.unitCarder) * (data.workedHours / data.planHours);
-            row.find('#mo-profit').text(moProfit.toFixed(2));
+            var moProfit = sumComponentProfits();
+            row.find('#mo-profit').text(rnd(moProfit));
             row.find('#mo-profit').css('color', moProfit >= 0 ? '#28a745' : '#dc3545');
         }
 
@@ -1573,9 +1615,9 @@ if ($is_assembly_division) {
                 var dayTtlIdx = tds.length - 5;
                 if (tds.length > dayTtlIdx) {
                     $(tds[dayTtlIdx]).text(Math.round(totalDay));
-                    $(tds[dayTtlIdx + 1]).text(totalErn.toFixed(1));
-                    var avgEff = count > 0 ? round((totalEff / count) * 100, 1) : 0;
-                    $(tds[dayTtlIdx + 2]).text(avgEff.toFixed(1) + '%');
+                    $(tds[dayTtlIdx + 1]).text(rnd(totalErn));
+                    var avgEff = count > 0 ? round((totalEff / count)) : 0;
+                    $(tds[dayTtlIdx + 2]).text(avgEff + '%');
                 }
             }
         }
@@ -1594,11 +1636,11 @@ if ($is_assembly_division) {
                 row.find('#lt-hour-' + h).text(Math.round(data.hours[h] || 0));
             }
             row.find('#lt-day-total').text(Math.round(data.day_total));
-            row.find('#lt-ern-minutes').text(data.ern_minutes.toFixed(1));
-            row.find('#lt-acvd-eff').text((data.acvd_eff * 100).toFixed(1) + '%');
+            row.find('#lt-ern-minutes').text(rnd(data.ern_minutes));
+            row.find('#lt-acvd-eff').text(rnd(data.acvd_eff * 100) + '%');
             
             var ltProfit = (500 * data.day_total) - (7365 * (data.assemble_carder + SHIRT_MATCH_OUT_CARDER));
-            row.find('#lt-profit').text(ltProfit.toFixed(2));
+            row.find('#lt-profit').text(rnd(ltProfit));
             row.find('#lt-profit').css('color', ltProfit >= 0 ? '#28a745' : '#dc3545');
             
             var dhuDayTotal = 0;
@@ -1632,11 +1674,11 @@ if ($is_assembly_division) {
                 row.find('#gt-hour-' + h).text(data.hours[h].toFixed(4));
             }
             row.find('#gt-day-total').text(Math.round(data.day_total));
-            row.find('#gt-ern-minutes').text(data.ern_minutes.toFixed(1));
-            row.find('#gt-acvd-eff').text((data.acvd_eff * 100).toFixed(1) + '%');
+            row.find('#gt-ern-minutes').text(rnd(data.ern_minutes));
+            row.find('#gt-acvd-eff').text(rnd(data.acvd_eff * 100) + '%');
             
             var gtProfit = (500 * data.day_total) - (7365 * data.assemble_carder);
-            row.find('#gt-profit').text(gtProfit.toFixed(2));
+            row.find('#gt-profit').text(rnd(gtProfit));
             row.find('#gt-profit').css('color', gtProfit >= 0 ? '#28a745' : '#dc3545');
         }
 
@@ -1646,20 +1688,18 @@ if ($is_assembly_division) {
 
         $(document).on('input change', '.field-input, .hour-input', function() {
             var row = $(this).closest('tr');
-            if (!row.hasClass('match-out-row') && !row.hasClass('lean-total-row') && 
-                !row.hasClass('grand-total-row') && !row.hasClass('total-row') && 
-                !row.hasClass('dhu-row') && !row.hasClass('assembly-dhu-row') &&
-                !row.hasClass('section-divider')) {
+            if (!row.hasClass('lean-total-row') && !row.hasClass('grand-total-row') && 
+                !row.hasClass('total-row') && !row.hasClass('dhu-row') && 
+                !row.hasClass('assembly-dhu-row') && !row.hasClass('section-divider')) {
                 recalcRow(row);
             }
         });
 
         $(document).on('change', '#workHours', function() {
             $('.excel-table tbody tr').each(function() {
-                if (!$(this).hasClass('match-out-row') && !$(this).hasClass('lean-total-row') && 
-                    !$(this).hasClass('grand-total-row') && !$(this).hasClass('total-row') && 
-                    !$(this).hasClass('dhu-row') && !$(this).hasClass('assembly-dhu-row') &&
-                    !$(this).hasClass('section-divider')) {
+                if (!$(this).hasClass('lean-total-row') && !$(this).hasClass('grand-total-row') && 
+                    !$(this).hasClass('total-row') && !$(this).hasClass('dhu-row') && 
+                    !$(this).hasClass('assembly-dhu-row') && !$(this).hasClass('section-divider')) {
                     recalcRow($(this));
                 }
             });
@@ -1694,10 +1734,9 @@ if ($is_assembly_division) {
             
             rows.each(function() {
                 var row = $(this);
-                if (row.hasClass('match-out-row') || row.hasClass('lean-total-row') || 
-                    row.hasClass('grand-total-row') || row.hasClass('total-row') || 
-                    row.hasClass('dhu-row') || row.hasClass('assembly-dhu-row') ||
-                    row.hasClass('section-divider')) {
+                if (row.hasClass('lean-total-row') || row.hasClass('grand-total-row') || 
+                    row.hasClass('total-row') || row.hasClass('dhu-row') || 
+                    row.hasClass('assembly-dhu-row') || row.hasClass('section-divider')) {
                     return;
                 }
                 totalRows++;
@@ -1708,17 +1747,32 @@ if ($is_assembly_division) {
                 var division = <?php echo $division_id; ?>;
                 var isAssembly = row.data('isassembly') == '1';
                 var data = {};
-                data.ttl_sam_pc = parseFloat(row.find('input[data-field="ttl_sam_pc"]').val()) || 0;
-                data.unit_smv = parseFloat(row.find('input[data-field="unit_smv"]').val()) || 0;
-                data.unit_carder = parseFloat(row.find('input[data-field="unit_carder"]').val()) || 0;
-                data.plan_hours = parseFloat(row.find('input[data-field="plan_hours"]').val()) || 0;
-                data.worked_hours = parseFloat(row.find('input[data-field="worked_hours"]').val()) || hours;
-                data.epm = parseFloat(row.find('input[data-field="epm"]').val()) || 13.2;
-                data.style_epm = parseFloat(row.find('input[data-field="style_epm"]').val()) || 13.2;
-                data.profit = parseFloat(row.find('.profit-value').text()) || 0;
-                for (var h = 1; h <= 11; h++) {
-                    data['hour_' + h] = parseFloat(row.find('input[data-hour="' + h + '"]').val()) || 0;
+                
+                if (row.hasClass('match-out-row')) {
+                    data.ttl_sam_pc = parseFloat(row.find('#mo-ttl-sam').text()) || 0;
+                    data.unit_smv = parseFloat(row.find('#mo-unit-smv').text()) || 0;
+                    data.unit_carder = parseFloat(row.find('#mo-unit-carder').text()) || 0;
+                    data.plan_hours = parseFloat(row.find('#mo-plan-hours').text()) || 0;
+                    data.worked_hours = parseFloat(row.find('#mo-worked-hours').text()) || hours;
+                    data.epm = parseFloat(row.find('#mo-epm').val()) || 13.2;
+                    data.profit = parseFloat(row.find('#mo-profit').text()) || 0;
+                    for (var h = 1; h <= 11; h++) {
+                        data['hour_' + h] = parseFloat(row.find('.mo-hour-input[data-hour="' + h + '"]').val()) || 0;
+                    }
+                } else {
+                    data.ttl_sam_pc = parseFloat(row.find('input[data-field="ttl_sam_pc"]').val()) || 0;
+                    data.unit_smv = parseFloat(row.find('input[data-field="unit_smv"]').val()) || 0;
+                    data.unit_carder = parseFloat(row.find('input[data-field="unit_carder"]').val()) || 0;
+                    data.plan_hours = parseFloat(row.find('input[data-field="plan_hours"]').val()) || 0;
+                    data.worked_hours = parseFloat(row.find('input[data-field="worked_hours"]').val()) || hours;
+                    data.epm = parseFloat(row.find('input[data-field="epm"]').val()) || 13.2;
+                    data.style_epm = parseFloat(row.find('input[data-field="style_epm"]').val()) || 13.2;
+                    data.profit = parseFloat(row.find('.profit-value').text()) || 0;
+                    for (var h = 1; h <= 11; h++) {
+                        data['hour_' + h] = parseFloat(row.find('input[data-hour="' + h + '"]').val()) || 0;
+                    }
                 }
+                
                 var promise = $.ajax({
                     url: 'save_data.php',
                     type: 'POST',
@@ -1761,18 +1815,129 @@ if ($is_assembly_division) {
             }
         });
 
+        // ============================================================
+        // FLUSH PENDING SAVES HELPER
+        // ============================================================
+        function flushAllSaves() {
+            $('.excel-table tbody tr').each(function() {
+                var r = $(this);
+                if (r.hasClass('lean-total-row') || r.hasClass('grand-total-row') || 
+                    r.hasClass('total-row') || r.hasClass('dhu-row') || 
+                    r.hasClass('assembly-dhu-row') || r.hasClass('section-divider')) {
+                    return;
+                }
+                var compId = r.data('component');
+                if (!compId || compId <= 0) return;
+                
+                var date = $('#reportDate').val();
+                var hours = $('#workHours').val();
+                var division = <?php echo $division_id; ?>;
+                var isAssembly = r.data('isassembly') == '1';
+                var data = {};
+                
+                if (r.hasClass('match-out-row')) {
+                    data.ttl_sam_pc = parseFloat(r.find('#mo-ttl-sam').text()) || 0;
+                    data.unit_smv = parseFloat(r.find('#mo-unit-smv').text()) || 0;
+                    data.unit_carder = parseFloat(r.find('#mo-unit-carder').text()) || 0;
+                    data.plan_hours = parseFloat(r.find('#mo-plan-hours').text()) || 0;
+                    data.worked_hours = parseFloat(r.find('#mo-worked-hours').text()) || hours;
+                    data.epm = parseFloat(r.find('#mo-epm').val()) || 13.2;
+                    data.profit = parseFloat(r.find('#mo-profit').text()) || 0;
+                    for (var h = 1; h <= 11; h++) {
+                        data['hour_' + h] = parseFloat(r.find('.mo-hour-input[data-hour="' + h + '"]').val()) || 0;
+                    }
+                } else {
+                    data.ttl_sam_pc = parseFloat(r.find('input[data-field="ttl_sam_pc"]').val()) || 0;
+                    data.unit_smv = parseFloat(r.find('input[data-field="unit_smv"]').val()) || 0;
+                    data.unit_carder = parseFloat(r.find('input[data-field="unit_carder"]').val()) || 0;
+                    data.plan_hours = parseFloat(r.find('input[data-field="plan_hours"]').val()) || 0;
+                    data.worked_hours = parseFloat(r.find('input[data-field="worked_hours"]').val()) || hours;
+                    data.epm = parseFloat(r.find('input[data-field="epm"]').val()) || 13.2;
+                    data.style_epm = parseFloat(r.find('input[data-field="style_epm"]').val()) || 13.2;
+                    data.profit = parseFloat(r.find('.profit-value').text()) || 0;
+                    for (var h = 1; h <= 11; h++) {
+                        data['hour_' + h] = parseFloat(r.find('input[data-hour="' + h + '"]').val()) || 0;
+                    }
+                }
+                
+                var formData = new FormData();
+                formData.append('action', 'auto_save');
+                formData.append('date', date);
+                formData.append('division', division);
+                formData.append('component', compId);
+                formData.append('data', JSON.stringify(data));
+                formData.append('work_hours', hours);
+                formData.append('is_assembly', isAssembly ? '1' : '0');
+                
+                if (navigator.sendBeacon) {
+                    navigator.sendBeacon('save_data.php', formData);
+                } else {
+                    $.ajax({
+                        url: 'save_data.php',
+                        type: 'POST',
+                        data: {
+                            action: 'auto_save',
+                            date: date,
+                            division: division,
+                            component: compId,
+                            data: JSON.stringify(data),
+                            work_hours: hours,
+                            is_assembly: isAssembly ? '1' : '0'
+                        },
+                        async: false
+                    });
+                }
+            });
+        }
+
         $(document).ready(function() {
             setTimeout(function() {
                 $('.excel-table tbody tr').each(function() {
-                    if (!$(this).hasClass('match-out-row') && !$(this).hasClass('lean-total-row') && 
-                        !$(this).hasClass('grand-total-row') && !$(this).hasClass('total-row') && 
-                        !$(this).hasClass('dhu-row') && !$(this).hasClass('assembly-dhu-row') &&
-                        !$(this).hasClass('section-divider')) {
+                    if (!$(this).hasClass('lean-total-row') && !$(this).hasClass('grand-total-row') && 
+                        !$(this).hasClass('total-row') && !$(this).hasClass('dhu-row') && 
+                        !$(this).hasClass('assembly-dhu-row') && !$(this).hasClass('section-divider')) {
                         recalcRow($(this));
                     }
                 });
                 setTimeout(function() { updateSummaryRows(); }, 1000);
             }, 500);
+
+            // ============================================================
+            // FORCE Match Out profit = sum of component profits (on page load)
+            // Now uses the fixed sumComponentProfits() that excludes assembly rows
+            // ============================================================
+            setTimeout(function() {
+                var matchOutRow = $('#matchOutRow');
+                if (matchOutRow.length > 0) {
+                    var moProfit = sumComponentProfits();
+                    matchOutRow.find('#mo-profit').text(Math.round(moProfit));
+                    matchOutRow.find('#mo-profit').css('color', moProfit >= 0 ? '#28a745' : '#dc3545');
+                }
+            }, 800);
+
+            // ============================================================
+            // FLUSH PENDING SAVES BEFORE LEAVING THE PAGE
+            // ============================================================
+            $(window).on('beforeunload', function() {
+                // Cancel all scheduled saves and fire them immediately
+                for (var key in saveTimeouts) {
+                    if (saveTimeouts.hasOwnProperty(key)) {
+                        clearTimeout(saveTimeouts[key]);
+                    }
+                }
+                // Trigger a final save of all rows
+                flushAllSaves();
+            });
+
+            // ============================================================
+            // Save when user switches tabs or minimizes (mobile-friendly)
+            // ============================================================
+            document.addEventListener('visibilitychange', function() {
+                if (document.visibilityState === 'hidden') {
+                    // Trigger a silent save of all rows
+                    flushAllSaves();
+                }
+            });
         });
     </script>
 </body>

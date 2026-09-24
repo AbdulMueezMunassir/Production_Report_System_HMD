@@ -17,54 +17,51 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// ALWAYS use GET parameters if provided; otherwise default to today
-// Do NOT fall back to session values unless GET is explicitly given
-$from_date = isset($_GET['from']) && !empty($_GET['from']) ? $_GET['from'] : date('Y-m-d');
-$to_date   = isset($_GET['to']) && !empty($_GET['to']) ? $_GET['to'] : date('Y-m-d');
+// ============================================================
+// FILTER HANDLING
+// ============================================================
+$from_date       = isset($_GET['from']) && !empty($_GET['from']) ? $_GET['from'] : date('Y-m-d');
+$to_date         = isset($_GET['to']) && !empty($_GET['to']) ? $_GET['to'] : date('Y-m-d');
 $division_filter = isset($_GET['division']) ? $_GET['division'] : 'all';
 
-// Save only if GET parameters were actually used (so session stays in sync)
-if (isset($_GET['from']) || isset($_GET['to']) || isset($_GET['division'])) {
-    $_SESSION['report_from'] = $from_date;
-    $_SESSION['report_to'] = $to_date;
-    $_SESSION['report_division'] = $division_filter;
-} else {
-    // If no GET params, we still want to set session to today for consistency
-    $_SESSION['report_from'] = $from_date;
-    $_SESSION['report_to'] = $to_date;
-    $_SESSION['report_division'] = $division_filter;
-}
+// Save to session so other pages can pick it up if needed
+$_SESSION['report_from']     = $from_date;
+$_SESSION['report_to']       = $to_date;
+$_SESSION['report_division'] = $division_filter;
 
 // ============================================================
-// DIVISION NAMES - Loaded dynamically from the divisions table
+// LOAD DIVISIONS
 // ============================================================
 $division_display_names = [];
+$divisions              = [];
+$assembly_division_ids  = []; // To mark "assembly" divisions
 
-// Get divisions for the filter dropdown
-$divisions = [];
 try {
     $stmt = $conn->prepare("SELECT id, name, type FROM divisions ORDER BY id ASC");
     $stmt->execute();
     $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    $divisions = [];
+
     foreach ($results as $div) {
-        // For any division that is type 'assembly', display as "Assembly"
-        if (isset($div['type']) && $div['type'] === 'assembly') {
-            $display_name = 'Assembly';
-        } else {
-            $display_name = $div['name'];
-        }
+        $is_assembly = (isset($div['type']) && $div['type'] === 'assembly');
+        $display_name = $is_assembly ? 'Assembly' : $div['name'];
+
         $division_display_names[$div['id']] = $display_name;
         $div['display_name'] = $display_name;
+        $div['is_assembly']  = $is_assembly;
+
+        if ($is_assembly) {
+            $assembly_division_ids[] = (int)$div['id'];
+        }
+
         $divisions[] = $div;
     }
 } catch (Exception $e) {
     error_log("Divisions query error: " . $e->getMessage());
-    $divisions = array();
 }
 
-// Build the query - Get ALL reports
+// ============================================================
+// LOAD REPORT ROWS (components)
+// ============================================================
 $sql = "SELECT 
             DATE(r.report_date) AS report_date, 
             r.devition_id,
@@ -74,7 +71,7 @@ $sql = "SELECT
             r.ttl_sam_pc,
             r.unit_smv,
             r.unit_carder,
-            r.id as report_id,
+            r.id AS report_id,
             r.ern_minutes,
             r.plan_hours,
             r.worked_hours,
@@ -91,7 +88,7 @@ $sql = "SELECT
         WHERE DATE(r.report_date) BETWEEN ? AND ?
         AND r.unit_id NOT IN (996, 997, 998, 999)";
 
-$params = array($from_date, $to_date);
+$params = [$from_date, $to_date];
 
 if ($division_filter !== 'all' && !empty($division_filter)) {
     $sql .= " AND r.devition_id = ?";
@@ -104,13 +101,15 @@ try {
     $stmt = $conn->prepare($sql);
     $stmt->execute($params);
     $reports = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    if (!is_array($reports)) $reports = array();
+    if (!is_array($reports)) $reports = [];
 } catch (Exception $e) {
     error_log("Reports query error: " . $e->getMessage());
-    $reports = array();
+    $reports = [];
 }
 
-// Get summary rows separately (MO, DHU, Lean Total, Grand Total)
+// ============================================================
+// LOAD SUMMARY ROWS (MO / DHU / Lean / Grand)
+// ============================================================
 $summary_sql = "SELECT 
             DATE(r.report_date) AS report_date, 
             r.devition_id,
@@ -120,12 +119,13 @@ $summary_sql = "SELECT
             r.ern_minutes,
             r.unit_carder,
             r.ttl_sam_pc,
-            r.unit_smv
+            r.unit_smv,
+            r.profit
         FROM production_reports r 
         WHERE DATE(r.report_date) BETWEEN ? AND ?
         AND r.unit_id IN (996, 997, 998, 999)";
 
-$summary_params = array($from_date, $to_date);
+$summary_params = [$from_date, $to_date];
 if ($division_filter !== 'all' && !empty($division_filter)) {
     $summary_sql .= " AND r.devition_id = ?";
     $summary_params[] = (int)$division_filter;
@@ -135,127 +135,140 @@ try {
     $stmt = $conn->prepare($summary_sql);
     $stmt->execute($summary_params);
     $summary_reports = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    if (!is_array($summary_reports)) $summary_reports = array();
+    if (!is_array($summary_reports)) $summary_reports = [];
 } catch (Exception $e) {
     error_log("Summary query error: " . $e->getMessage());
-    $summary_reports = array();
+    $summary_reports = [];
 }
 
-// Group reports by date and division
+// ============================================================
+// GROUP BY DATE + DIVISION
+// ============================================================
 $grouped_reports = [];
 
-// First, add all regular components
+$initGroup = function ($date, $division_id, $division_name) {
+    return [
+        'date'              => $date,
+        'division_id'       => $division_id,
+        'division_name'     => $division_name,
+        'components'        => [],
+        'summary'           => [
+            'match_out'    => null,
+            'dhu'          => null,
+            'lean_total'   => null,
+            'grand_total'  => null,
+        ],
+        'total_pcs'         => 0,
+        'total_ern'         => 0,
+        'total_eff_sum'     => 0,   // sum of eff (for weighting)
+        'total_day_for_eff' => 0,   // day_total used as weight
+        'total_profit'      => 0,
+        'eff_count'         => 0,
+    ];
+};
+
+// Regular components
 foreach ($reports as $report) {
-    $devition_id = (int)$report['devition_id'];
-    $display_name = isset($division_display_names[$devition_id]) ? $division_display_names[$devition_id] : 'Unknown';
-    
-    $key = date('Y-m-d', strtotime($report['report_date'])) . '_' . $devition_id;
-    
+    $devition_id  = (int)$report['devition_id'];
+    $display_name = $division_display_names[$devition_id] ?? 'Unknown';
+    $key          = date('Y-m-d', strtotime($report['report_date'])) . '_' . $devition_id;
+
     if (!isset($grouped_reports[$key])) {
-        $grouped_reports[$key] = [
-            'date' => $report['report_date'],
-            'division_id' => $devition_id,
-            'division_name' => $display_name,
-            'components' => [],
-            'summary' => [
-                'match_out' => null,
-                'dhu' => null,
-                'lean_total' => null,
-                'grand_total' => null
-            ],
-            'total_pcs' => 0,
-            'total_ern' => 0,
-            'total_eff' => 0,
-            'eff_count' => 0
-        ];
+        $grouped_reports[$key] = $initGroup($report['report_date'], $devition_id, $display_name);
     }
-    
+
     $grouped_reports[$key]['components'][] = $report;
-    if ($report['day_total'] > 0) {
-        $grouped_reports[$key]['total_pcs'] += $report['day_total'];
-        $grouped_reports[$key]['total_ern'] += $report['ern_minutes'] ?? 0;
-        if ($report['acvd_eff'] > 0) {
-            $grouped_reports[$key]['total_eff'] += $report['acvd_eff'] * 100;
-            $grouped_reports[$key]['eff_count']++;
+
+    $dayTotal = (float)($report['day_total'] ?? 0);
+    if ($dayTotal > 0) {
+        $grouped_reports[$key]['total_pcs']     += $dayTotal;
+        $grouped_reports[$key]['total_ern']     += (float)($report['ern_minutes'] ?? 0);
+        $grouped_reports[$key]['total_profit']  += (float)($report['profit'] ?? 0);
+        $grouped_reports[$key]['eff_count']++;
+
+        $effVal = (float)($report['acvd_eff'] ?? 0);
+        // Support both 0..1 (fraction) and 0..100 (percent)
+        if ($effVal > 0 && $effVal <= 1) {
+            $effVal *= 100;
         }
+        $grouped_reports[$key]['total_eff_sum']     += $effVal;
+        $grouped_reports[$key]['total_day_for_eff'] += $dayTotal;
     }
 }
 
-// Then, add summary rows
+// Summary rows
 foreach ($summary_reports as $report) {
-    $devition_id = (int)$report['devition_id'];
-    $display_name = isset($division_display_names[$devition_id]) ? $division_display_names[$devition_id] : 'Unknown';
-    
-    $key = date('Y-m-d', strtotime($report['report_date'])) . '_' . $devition_id;
-    
+    $devition_id  = (int)$report['devition_id'];
+    $display_name = $division_display_names[$devition_id] ?? 'Unknown';
+    $key          = date('Y-m-d', strtotime($report['report_date'])) . '_' . $devition_id;
+
     if (!isset($grouped_reports[$key])) {
-        $grouped_reports[$key] = [
-            'date' => $report['report_date'],
-            'division_id' => $devition_id,
-            'division_name' => $display_name,
-            'components' => [],
-            'summary' => [
-                'match_out' => null,
-                'dhu' => null,
-                'lean_total' => null,
-                'grand_total' => null
-            ],
-            'total_pcs' => 0,
-            'total_ern' => 0,
-            'total_eff' => 0,
-            'eff_count' => 0
-        ];
+        $grouped_reports[$key] = $initGroup($report['report_date'], $devition_id, $display_name);
     }
-    
-    $unit_id = $report['unit_id'] ?? 0;
-    if ($unit_id == 999) {
+
+    $unit_id = (int)($report['unit_id'] ?? 0);
+    if ($unit_id === 999) {
         $grouped_reports[$key]['summary']['match_out'] = $report;
-    } elseif ($unit_id == 998) {
+    } elseif ($unit_id === 998) {
         $grouped_reports[$key]['summary']['dhu'] = $report;
-    } elseif ($unit_id == 997) {
+    } elseif ($unit_id === 997) {
         $grouped_reports[$key]['summary']['lean_total'] = $report;
-    } elseif ($unit_id == 996) {
+    } elseif ($unit_id === 996) {
         $grouped_reports[$key]['summary']['grand_total'] = $report;
     }
 }
 
-// Calculate summary for each group
+// Finalize averages
 foreach ($grouped_reports as $key => &$group) {
-    $group['avg_eff'] = $group['eff_count'] > 0 ? round($group['total_eff'] / $group['eff_count'], 1) : 0;
-    $group['avg_ern'] = $group['eff_count'] > 0 ? round($group['total_ern'] / $group['eff_count'], 1) : 0;
-    
+    $group['avg_eff'] = $group['eff_count'] > 0
+        ? round($group['total_eff_sum'] / $group['eff_count'], 1)
+        : 0;
+
+    $group['avg_ern'] = $group['eff_count'] > 0
+        ? round($group['total_ern'] / $group['eff_count'], 1)
+        : 0;
+
     $summary_count = 0;
-    if ($group['summary']['match_out']) $summary_count++;
-    if ($group['summary']['dhu']) $summary_count++;
-    if ($group['summary']['lean_total']) $summary_count++;
+    if ($group['summary']['match_out'])   $summary_count++;
+    if ($group['summary']['dhu'])         $summary_count++;
+    if ($group['summary']['lean_total'])  $summary_count++;
     if ($group['summary']['grand_total']) $summary_count++;
-    $group['summary_count'] = $summary_count;
+
+    $group['summary_count']   = $summary_count;
     $group['component_count'] = count($group['components']);
+
+    // Mark whether this division is an assembly type
+    $group['is_assembly'] = in_array($group['division_id'], $assembly_division_ids, true);
 }
 unset($group);
 
-// Calculate stats
-$total_reports = count($grouped_reports);
-$avg_eff = 0;
-$total_prod = 0;
+// ============================================================
+// KPI CALCULATIONS
+// ============================================================
+$total_groups        = count($grouped_reports);           // date-division groups
+$total_components    = 0;
+$total_ern_global    = 0;
+$total_prod_global   = 0;
+$total_profit_global = 0;
+$eff_weighted_sum    = 0;
+$eff_weight_total    = 0;
+
 foreach ($grouped_reports as $r) {
-    $avg_eff += $r['avg_eff'];
-    $total_prod += $r['total_pcs'];
-}
-$avg_eff = $total_reports > 0 ? round($avg_eff / $total_reports, 1) : 0;
+    $total_components += $r['component_count'];
+    $total_prod_global += $r['total_pcs'];
+    $total_ern_global += $r['total_ern'];
+    $total_profit_global += $r['total_profit'];
 
-$current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
-
-// Debug: Check if Assembly has data (any division with type 'assembly')
-$assembly_count = 0;
-foreach ($grouped_reports as $group) {
-    foreach ($divisions as $div) {
-        if ($div['id'] == $group['division_id'] && isset($div['type']) && $div['type'] === 'assembly') {
-            $assembly_count++;
-            break;
-        }
+    // Weighted average: weight by day_total
+    if ($r['total_day_for_eff'] > 0) {
+        $eff_weighted_sum += $r['total_eff_sum'];
+        $eff_weight_total += $r['eff_count'];
     }
 }
+
+$avg_eff = $eff_weight_total > 0 ? round($eff_weighted_sum / $eff_weight_total, 1) : 0;
+
+$current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -294,10 +307,8 @@ foreach ($grouped_reports as $group) {
         }
         .bg-shapes {
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
             overflow: hidden;
             z-index: 0;
             pointer-events: none;
@@ -317,7 +328,7 @@ foreach ($grouped_reports as $group) {
             50% { transform: translate(-40px, 40px) scale(0.9); }
             75% { transform: translate(30px, 30px) scale(1.05); }
         }
-        
+
         .topbar {
             position: relative;
             z-index: 10;
@@ -333,45 +344,12 @@ foreach ($grouped_reports as $group) {
             gap: 10px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.05);
         }
-        .topbar .logo-mark { 
-            display: flex; 
-            align-items: center; 
-            gap: 12px; 
-            font-weight: 800; 
-            font-size: 20px; 
-            color: var(--primary-dark);
-            text-decoration: none;
-        }
-        .topbar .logo-mark .logo-icon { 
-            font-size: 32px;
-            background: var(--primary);
-            color: #fff;
-            width: 40px;
-            height: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 10px;
-            font-weight: 700;
-            font-size: 18px;
-        }
-        .topbar .logo-mark .logo-text {
-            letter-spacing: -0.5px;
-        }
-        .topbar .logo-mark .logo-text span {
-            color: var(--primary);
-        }
+        .topbar .logo-mark { display: flex; align-items: center; gap: 12px; font-weight: 800; font-size: 20px; color: var(--primary-dark); text-decoration: none; }
+        .topbar .logo-mark .logo-icon { background: var(--primary); color: #fff; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border-radius: 10px; font-weight: 700; font-size: 18px; }
+        .topbar .logo-mark .logo-text { letter-spacing: -0.5px; }
+        .topbar .logo-mark .logo-text span { color: var(--primary); }
         .topnav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-        .topnav a {
-            color: var(--steel);
-            text-decoration: none;
-            font-size: 14px;
-            font-weight: 600;
-            padding: 7px 16px;
-            border-radius: 10px;
-            transition: all 0.3s;
-            background: transparent;
-        }
+        .topnav a { color: var(--steel); text-decoration: none; font-size: 14px; font-weight: 600; padding: 7px 16px; border-radius: 10px; transition: all 0.3s; background: transparent; }
         .topnav a:hover { color: var(--primary); background: rgba(33, 115, 70, 0.08); }
         .topnav a.active { color: #fff; background: var(--primary); box-shadow: 0 4px 15px rgba(33, 115, 70, 0.3); }
         .right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--steel); }
@@ -385,11 +363,11 @@ foreach ($grouped_reports as $group) {
         .admin-badge { font-size: 9px; background: var(--primary); color: #fff; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
 
         .wrap { position: relative; z-index: 5; max-width: 1400px; margin: 0 auto; padding: 30px; }
-        
+
         .dash-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
         .dash-head h2 { font-size: 24px; font-weight: 800; color: var(--text-dark); }
         .dash-head p { color: var(--steel); font-size: 14px; font-weight: 500; margin-top: 4px; }
-        
+
         .filter-row {
             display: flex;
             gap: 12px;
@@ -417,7 +395,7 @@ foreach ($grouped_reports as $group) {
             min-width: 140px;
         }
         .filter-row input:focus, .filter-row select:focus { outline: none; border-color: var(--primary); }
-        
+
         .btn-apply {
             padding: 8px 20px;
             background: var(--primary);
@@ -432,7 +410,7 @@ foreach ($grouped_reports as $group) {
             white-space: nowrap;
         }
         .btn-apply:hover { background: var(--primary-dark); transform: translateY(-2px); box-shadow: 0 4px 15px rgba(33,115,70,0.3); }
-        
+
         .btn-outline {
             padding: 8px 20px;
             border: 1px solid var(--glass-border);
@@ -446,7 +424,7 @@ foreach ($grouped_reports as $group) {
             font-family: 'Inter', sans-serif;
         }
         .btn-outline:hover { border-color: var(--primary); color: var(--primary); background: rgba(33,115,70,0.08); }
-        
+
         .btn-view-action {
             padding: 4px 14px;
             background: var(--amber);
@@ -462,7 +440,7 @@ foreach ($grouped_reports as $group) {
             display: inline-block;
         }
         .btn-view-action:hover { background: #e65100; transform: scale(1.05); }
-        
+
         .kpi-row {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -483,7 +461,7 @@ foreach ($grouped_reports as $group) {
         .kpi-card:hover { transform: translateY(-4px); box-shadow: 0 12px 40px rgba(0,0,0,0.1); }
         .kpi-card .number { font-size: 30px; font-weight: 900; color: var(--primary); }
         .kpi-card .label { font-size: 13px; font-weight: 600; color: var(--steel); margin-top: 4px; }
-        
+
         .table-shell {
             background: var(--glass-bg);
             backdrop-filter: blur(20px);
@@ -516,12 +494,14 @@ foreach ($grouped_reports as $group) {
             font-size: 13px;
         }
         .table-shell tr:hover { background: rgba(255,255,255,0.2); }
-        
+
         .eff-good { color: var(--good); font-weight: 700; }
         .eff-bad { color: var(--bad); font-weight: 700; }
         .eff-avg { color: var(--warning); font-weight: 700; }
+        .profit-pos { color: var(--good); font-weight: 700; }
+        .profit-neg { color: var(--bad); font-weight: 700; }
         .no-data { text-align: center; padding: 40px; color: var(--steel); font-weight: 500; }
-        
+
         .back-button {
             display: inline-flex;
             align-items: center;
@@ -544,28 +524,11 @@ foreach ($grouped_reports as $group) {
             transform: translateX(-4px);
             box-shadow: 0 4px 15px rgba(0,0,0,0.08);
         }
-        
-        
-        
-        
-        
-        .filter-actions {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-        
-        .component-count {
-            font-size: 11px;
-            color: var(--steel);
-            font-weight: 500;
-        }
-        .summary-badges {
-            display: flex;
-            gap: 4px;
-            flex-wrap: wrap;
-        }
+
+        .filter-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+        .component-count { font-size: 11px; color: var(--steel); font-weight: 500; }
+        .summary-badges { display: flex; gap: 4px; flex-wrap: wrap; }
         .summary-badges .badge-sm {
             font-size: 9px;
             padding: 1px 6px;
@@ -577,7 +540,21 @@ foreach ($grouped_reports as $group) {
         .badge-sm.dhu { background: var(--dhu-color); }
         .badge-sm.lean { background: #17a2b8; }
         .badge-sm.grand { background: #6f42c1; }
-        
+        .badge-sm.assembly { background: var(--primary); }
+
+        .assembly-tag {
+            display: inline-block;
+            font-size: 9px;
+            font-weight: 700;
+            color: #fff;
+            background: var(--primary);
+            padding: 1px 6px;
+            border-radius: 4px;
+            margin-left: 6px;
+            vertical-align: middle;
+            letter-spacing: 0.3px;
+        }
+
         @media (max-width: 768px) {
             .topbar { padding: 10px 16px; flex-direction: column; align-items: stretch; gap: 8px; }
             .topnav { justify-content: center; }
@@ -591,8 +568,7 @@ foreach ($grouped_reports as $group) {
             .topnav a { padding: 6px 12px; font-size: 13px; }
             .table-shell { overflow-x: auto; }
             .table-shell table { font-size: 12px; }
-            .table-shell th,
-            .table-shell td { padding: 6px 8px; }
+            .table-shell th, .table-shell td { padding: 6px 8px; }
         }
         @media (max-width: 480px) { .kpi-row { grid-template-columns: 1fr; } }
     </style>
@@ -629,9 +605,7 @@ foreach ($grouped_reports as $group) {
     </div>
 
     <div class="wrap">
-        <a href="#" class="back-button" onclick="history.back(); return false;">
-            ← Back
-        </a>
+        <a href="#" class="back-button" onclick="history.back(); return false;">← Back</a>
 
         <div class="dash-head">
             <div>
@@ -644,16 +618,16 @@ foreach ($grouped_reports as $group) {
         <form class="filter-row" method="GET" action="">
             <div class="field">
                 <label>From</label>
-                <input id="rep-from" name="from" type="date" value="<?php echo $from_date; ?>">
+                <input id="rep-from" name="from" type="date" value="<?php echo htmlspecialchars($from_date); ?>">
             </div>
             <div class="field">
                 <label>To</label>
-                <input id="rep-to" name="to" type="date" value="<?php echo $to_date; ?>">
+                <input id="rep-to" name="to" type="date" value="<?php echo htmlspecialchars($to_date); ?>">
             </div>
             <div class="field">
-                <label>Devition</label>
+                <label>Division</label>
                 <select id="rep-division" name="division">
-                    <option value="all" <?php echo $division_filter === 'all' ? 'selected' : ''; ?>>All devitions</option>
+                    <option value="all" <?php echo $division_filter === 'all' ? 'selected' : ''; ?>>All divisions</option>
                     <?php if (!empty($divisions)): ?>
                     <?php foreach ($divisions as $div): ?>
                     <option value="<?php echo $div['id']; ?>" <?php echo $division_filter == $div['id'] ? 'selected' : ''; ?>>
@@ -670,13 +644,26 @@ foreach ($grouped_reports as $group) {
             </div>
         </form>
 
-        
-
+        <!-- KPIs -->
         <div class="kpi-row" id="rep-kpis">
-            <div class="kpi-card"><div class="number"><?php echo $total_reports; ?></div><div class="label">Total Reports</div></div>
-            <div class="kpi-card"><div class="number"><?php echo $avg_eff; ?>%</div><div class="label">Avg Efficiency</div></div>
-            <div class="kpi-card"><div class="number"><?php echo number_format($total_prod, 0); ?></div><div class="label">Total Production</div></div>
-            <div class="kpi-card"><div class="number"><?php echo count($divisions); ?></div><div class="label">Divisions Active</div></div>
+            <div class="kpi-card">
+                <div class="number"><?php echo $total_groups; ?></div>
+                <div class="label">Report Groups</div>
+            </div>
+            <div class="kpi-card">
+                <div class="number"><?php echo $avg_eff; ?>%</div>
+                <div class="label">Avg Efficiency</div>
+            </div>
+            <div class="kpi-card">
+                <div class="number"><?php echo number_format($total_prod_global, 0); ?></div>
+                <div class="label">Total Production (Pcs)</div>
+            </div>
+            <div class="kpi-card">
+                <div class="number <?php echo $total_profit_global >= 0 ? 'profit-pos' : 'profit-neg'; ?>">
+                    <?php echo number_format($total_profit_global, 0); ?>
+                </div>
+                <div class="label">Total Profit</div>
+            </div>
         </div>
 
         <div class="table-shell">
@@ -684,35 +671,49 @@ foreach ($grouped_reports as $group) {
                 <thead>
                     <tr>
                         <th style="text-align:left;">Date</th>
-                        <th style="text-align:left;">Devition</th>
+                        <th style="text-align:left;">Division</th>
                         <th>Components</th>
                         <th>Achieved Eff</th>
                         <th>Earn Minutes</th>
+                        <th>Profit</th>
                         <th>Summary Rows</th>
                         <th style="text-align:center;">Action</th>
                     </tr>
                 </thead>
                 <tbody id="rep-body">
                     <?php if (empty($grouped_reports)): ?>
-                    <tr><td colspan="7" class="no-data">
-                        No reports found for the selected date range. 
-                        Please go to a Devition page, enter data, and click "Save All".
-                    </td></tr>
+                    <tr>
+                        <td colspan="8" class="no-data">
+                            No reports found for the selected date range.<br>
+                            Please go to a Division page, enter data, and click "Save All".
+                        </td>
+                    </tr>
                     <?php else: ?>
                     <?php foreach ($grouped_reports as $group): 
                         $eff = $group['avg_eff'];
                         $eff_class = $eff >= 70 ? 'eff-good' : ($eff >= 50 ? 'eff-avg' : 'eff-bad');
                         $division_name = htmlspecialchars($group['division_name']);
-                        
+                        $profit = (float)$group['total_profit'];
+                        $profit_class = $profit >= 0 ? 'profit-pos' : 'profit-neg';
+
                         // Build view URL with current filters
-                        $view_url = 'view_report.php?date=' . $group['date'] . '&division=' . $group['division_id'] . '&from=' . $from_date . '&to=' . $to_date . '&division_filter=' . $division_filter;
-                        
-                        $summary_count = $group['summary_count'] ?? 0;
+                        $view_url = 'view_report.php?date=' . urlencode($group['date']) 
+                                  . '&division=' . urlencode($group['division_id']) 
+                                  . '&from=' . urlencode($from_date) 
+                                  . '&to=' . urlencode($to_date) 
+                                  . '&division_filter=' . urlencode($division_filter);
+
+                        $summary_count   = $group['summary_count'] ?? 0;
                         $component_count = $group['component_count'] ?? 0;
                     ?>
                     <tr>
                         <td><?php echo date('Y-m-d', strtotime($group['date'])); ?></td>
-                        <td><?php echo $division_name; ?></td>
+                        <td>
+                            <?php echo $division_name; ?>
+                            <?php if (!empty($group['is_assembly'])): ?>
+                                <span class="assembly-tag">ASSEMBLY</span>
+                            <?php endif; ?>
+                        </td>
                         <td>
                             <span class="component-count"><?php echo $component_count; ?> components</span>
                             <?php if ($summary_count > 0): ?>
@@ -721,6 +722,7 @@ foreach ($grouped_reports as $group) {
                         </td>
                         <td class="<?php echo $eff_class; ?>"><?php echo number_format($eff, 1); ?>%</td>
                         <td><?php echo number_format($group['avg_ern'], 1); ?></td>
+                        <td class="<?php echo $profit_class; ?>"><?php echo number_format($profit, 0); ?></td>
                         <td>
                             <div class="summary-badges">
                                 <?php if ($group['summary']['match_out']): ?>
@@ -750,8 +752,6 @@ foreach ($grouped_reports as $group) {
             </table>
         </div>
     </div>
-
-    
 
     <script>
         function updateClock() {
