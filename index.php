@@ -108,19 +108,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         .logo-section { text-align: center; margin-bottom: 32px; }
         .logo-icon {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
             width: 80px;
             height: 80px;
-            background: var(--primary, #217346);
             border-radius: 24px;
-            font-size: 36px;
             margin-bottom: 16px;
             border: 1px solid rgba(255,255,255,0.25);
             animation: pulse 2s infinite;
-            color: #fff;
-            font-weight: 800;
+            object-fit: cover;
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
         }
         @keyframes pulse {
             0%, 100% { transform: scale(1); }
@@ -247,7 +244,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <div class="login-wrapper">
         <div class="glass-container">
             <div class="logo-section">
-                <div class="logo-icon">H</div>
+                <img src="assets/images/logo.png" alt="H" class="logo-icon" style="object-fit:cover;">
                 <h1>HAMEEDIA</h1>
                 <p class="subtitle">Production Report - Hourly Production System</p>
             </div>

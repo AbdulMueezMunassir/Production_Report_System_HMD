@@ -290,7 +290,7 @@ $chart_labels = range(1, $work_hours);
         }
         .kiosk-header .logo { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 18px; color: var(--primary-dark); }
         .kiosk-header .logo a { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; }
-        .kiosk-header .logo-icon { width: 32px; height: 32px; background: var(--primary); color: #fff; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: 700; }
+        .kiosk-header .logo-icon { width: 32px; height: 32px; border-radius: 8px; object-fit: cover; }
         .kiosk-nav { display: flex; gap: 8px; align-items: center; }
         .kiosk-nav button {
             padding: 8px 20px; border: 2px solid var(--glass-border); border-radius: 10px;
@@ -385,7 +385,7 @@ $chart_labels = range(1, $work_hours);
 <body>
     <div class="kiosk-header">
         <div class="logo">
-            <span class="logo-icon">H</span>
+            <img src="assets/images/logo.png" alt="H" class="logo-icon" style="object-fit:cover;">
             <span>HAMEEDIA — Analytics</span>
             <a href="dashboard.php" style="margin-left:16px;padding:6px 16px;border:2px solid var(--glass-border);border-radius:10px;background:rgba(255,255,255,0.6);color:var(--text-dark);font-weight:700;font-size:13px;text-decoration:none;display:inline-flex;align-items:center;gap:6px;">← Back</a>
         </div>
@@ -1018,44 +1018,72 @@ $chart_labels = range(1, $work_hours);
         // ============================================================
         // CONTINUOUS SCROLL (infinite, top → bottom → top)
         // ============================================================
-        <?php if (in_array($selected_division, [1, 2, 3, 7])): ?>
+                <?php if (in_array($selected_division, [1, 2, 3, 7])): ?>
         (function() {
-            const SCROLL_SPEED = 0.5;
-            const PAUSE_AT_BOTTOM = 3000;
-            const PAUSE_AT_TOP = 2000;
+            // ============================================================
+            // SCROLL SETTINGS — Adjust these to change speed
+            // PIXELS_PER_SECOND:
+            //   10  = very slow
+            //   20  = slow (recommended)
+            //   30  = medium
+            //   50  = fast
+            // ============================================================
+            const PIXELS_PER_SECOND = 20;   // ← Change this to control speed
+            const PAUSE_AT_BOTTOM = 3000;   // ms to pause at bottom
+            const PAUSE_AT_TOP = 2000;      // ms to pause at top before scrolling again
             
             let scrolling = false;
             let paused = false;
+            let lastTime = 0;
+            let accumulator = 0;
             
             function startScroll() {
                 scrolling = true;
                 paused = false;
+                lastTime = performance.now();
                 requestAnimationFrame(step);
             }
             
-            function step() {
+            function step(currentTime) {
                 if (!scrolling) return;
                 if (paused) {
+                    lastTime = currentTime;
                     requestAnimationFrame(step);
                     return;
                 }
                 
-                const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
-                const currentY = window.pageYOffset;
+                const deltaMs = currentTime - lastTime;
+                lastTime = currentTime;
                 
-                if (currentY >= maxScroll - 1) {
-                    paused = true;
-                    setTimeout(() => {
-                        window.scrollTo(0, 0);
+                // Calculate pixels to move this frame
+                accumulator += (PIXELS_PER_SECOND * deltaMs) / 1000;
+                
+                // Only scroll when accumulated >= 1 pixel (browsers round down)
+                if (accumulator >= 1) {
+                    const pixelsToMove = Math.floor(accumulator);
+                    accumulator -= pixelsToMove;
+                    
+                    const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+                    const currentY = window.pageYOffset;
+                    
+                    if (currentY >= maxScroll - 1) {
+                        // Reached bottom — pause, jump to top
+                        paused = true;
+                        accumulator = 0;
                         setTimeout(() => {
-                            paused = false;
-                            requestAnimationFrame(step);
-                        }, PAUSE_AT_TOP);
-                    }, PAUSE_AT_BOTTOM);
-                    return;
+                            window.scrollTo(0, 0);
+                            setTimeout(() => {
+                                paused = false;
+                                lastTime = performance.now();
+                                requestAnimationFrame(step);
+                            }, PAUSE_AT_TOP);
+                        }, PAUSE_AT_BOTTOM);
+                        return;
+                    }
+                    
+                    window.scrollBy(0, pixelsToMove);
                 }
                 
-                window.scrollBy(0, SCROLL_SPEED);
                 requestAnimationFrame(step);
             }
             
@@ -1063,10 +1091,11 @@ $chart_labels = range(1, $work_hours);
                 setTimeout(startScroll, 1500);
             });
             
+            // Pause on user interaction
             ['mousedown', 'wheel', 'touchstart', 'keydown'].forEach(evt => {
                 window.addEventListener(evt, () => {
                     paused = true;
-                    setTimeout(() => { paused = false; }, 3000);
+                    setTimeout(() => { paused = false; lastTime = performance.now(); }, 3000);
                 }, { passive: true });
             });
         })();

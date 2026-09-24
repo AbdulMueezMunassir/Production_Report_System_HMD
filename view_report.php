@@ -495,7 +495,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
 
     <div class="topbar">
         <a href="dashboard.php" class="logo-mark">
-            <span class="logo-icon">H</span>
+            <img src="assets/images/logo.png" alt="H" class="logo-icon" style="object-fit:cover;">
             <span class="logo-text">HAMEEDIA</span>
         </a>
         <nav class="topnav">
