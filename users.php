@@ -13,6 +13,91 @@ if (!isAdmin()) {
 }
 
 $conn = getDB();
+
+// ============================================================
+// HANDLE AJAX POST REQUESTS (must come BEFORE any HTML output)
+// ============================================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    header('Content-Type: application/json');
+    
+    $action = $_POST['action'];
+    $response = ['success' => false, 'message' => 'Unknown action'];
+    
+    try {
+        if ($action === 'add_user') {
+            $full_name = trim($_POST['full_name'] ?? '');
+            $username = trim($_POST['username'] ?? '');
+            $password = $_POST['password'] ?? '';
+            $role = $_POST['role'] ?? 'user';
+            
+            if (empty($full_name) || empty($username) || empty($password)) {
+                $response = ['success' => false, 'message' => 'All fields are required'];
+            } elseif (strlen($password) < 6) {
+                $response = ['success' => false, 'message' => 'Password must be at least 6 characters'];
+            } else {
+                // Check if username exists
+                $check = $conn->prepare("SELECT id FROM users WHERE username = ?");
+                $check->execute([$username]);
+                if ($check->fetch()) {
+                    $response = ['success' => false, 'message' => 'Username already exists'];
+                } else {
+                    $hashed = password_hash($password, PASSWORD_DEFAULT);
+                    $stmt = $conn->prepare("INSERT INTO users (username, password, full_name, role) VALUES (?, ?, ?, ?)");
+                    if ($stmt->execute([$username, $hashed, $full_name, $role])) {
+                        $response = ['success' => true, 'message' => 'User created successfully'];
+                    } else {
+                        $response = ['success' => false, 'message' => 'Failed to create user'];
+                    }
+                }
+            }
+        } elseif ($action === 'delete_user') {
+            $user_id = (int)($_POST['user_id'] ?? 0);
+            
+            if ($user_id <= 0) {
+                $response = ['success' => false, 'message' => 'Invalid user ID'];
+            } else {
+                // Check if admin
+                $check = $conn->prepare("SELECT role FROM users WHERE id = ?");
+                $check->execute([$user_id]);
+                $u = $check->fetch(PDO::FETCH_ASSOC);
+                if ($u && $u['role'] === 'admin') {
+                    $response = ['success' => false, 'message' => 'Cannot delete admin user'];
+                } else {
+                    $stmt = $conn->prepare("DELETE FROM users WHERE id = ? AND role != 'admin'");
+                    if ($stmt->execute([$user_id])) {
+                        $response = ['success' => true, 'message' => 'User deleted successfully'];
+                    } else {
+                        $response = ['success' => false, 'message' => 'Failed to delete user'];
+                    }
+                }
+            }
+        } elseif ($action === 'reset_password') {
+            $user_id = (int)($_POST['user_id'] ?? 0);
+            $password = $_POST['password'] ?? '';
+            
+            if ($user_id <= 0 || strlen($password) < 6) {
+                $response = ['success' => false, 'message' => 'Invalid input. Password must be at least 6 characters'];
+            } else {
+                $hashed = password_hash($password, PASSWORD_DEFAULT);
+                $stmt = $conn->prepare("UPDATE users SET password = ? WHERE id = ?");
+                if ($stmt->execute([$hashed, $user_id])) {
+                    $response = ['success' => true, 'message' => 'Password updated successfully'];
+                } else {
+                    $response = ['success' => false, 'message' => 'Failed to update password'];
+                }
+            }
+        }
+    } catch (Exception $e) {
+        $response = ['success' => false, 'message' => 'Error: ' . $e->getMessage()];
+    }
+    
+    echo json_encode($response);
+    exit; // ⚠️ CRITICAL — stops HTML from rendering after JSON
+}
+
+// ============================================================
+// RENDER THE PAGE (GET request)
+// ============================================================
 $users = getAllUsers($conn);
 $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
 ?>
@@ -459,7 +544,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                         <td><span class="status-active">Active</span></td>
                         <td style="text-align:right;">
                             <div class="actions" style="justify-content:flex-end;">
-                                <button class="btn-outline-sm" onclick="openPasswordModal(<?php echo $user['id']; ?>, '<?php echo htmlspecialchars($user['username']); ?>')">Set password</button>
+                                <button class="btn-outline-sm" onclick="openPasswordModal(<?php echo $user['id']; ?>, '<?php echo htmlspecialchars($user['username'], ENT_QUOTES); ?>')">Set password</button>
                                 <?php if ($user['role'] !== 'admin'): ?>
                                 <button class="btn-danger" onclick="deleteUser(<?php echo $user['id']; ?>)">Delete</button>
                                 <?php endif; ?>
@@ -526,10 +611,12 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                 newToast.className = 'toast ' + type;
                 newToast.textContent = message;
                 document.body.appendChild(newToast);
+                setTimeout(() => { newToast.className = 'toast show'; }, 50);
                 setTimeout(() => { newToast.className = 'toast'; }, 3000);
             } else {
                 toast.textContent = message;
-                toast.className = 'toast ' + type + ' show';
+                toast.className = 'toast ' + type;
+                setTimeout(() => { toast.className = 'toast ' + type + ' show'; }, 50);
                 setTimeout(() => { toast.className = 'toast'; }, 3000);
             }
         }
