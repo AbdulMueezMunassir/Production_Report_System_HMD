@@ -22,16 +22,110 @@ if (!in_array($selected_division, $valid_divisions)) {
     $selected_division = 1;
 }
 
-$work_hours = 11;
-
 $division_names = [1 => 'Shirt', 2 => 'Trouser', 3 => 'Coat', 7 => 'Assembly'];
 $division_icons = [1 => '👔', 2 => '👖', 3 => '🧥', 7 => '🏭'];
+
+// ============================================================
+// AUTO-DETECT WORK HOURS FROM SAVED DATA
+// ============================================================
+$work_hours = 10;
+try {
+    $max_hour_query = "
+        SELECT 
+            MAX(CASE 
+                WHEN hour_11 > 0 THEN 11
+                WHEN hour_10 > 0 THEN 10
+                WHEN hour_9 > 0 THEN 9
+                WHEN hour_8 > 0 THEN 8
+                WHEN hour_7 > 0 THEN 7
+                WHEN hour_6 > 0 THEN 6
+                WHEN hour_5 > 0 THEN 5
+                WHEN hour_4 > 0 THEN 4
+                WHEN hour_3 > 0 THEN 3
+                WHEN hour_2 > 0 THEN 2
+                WHEN hour_1 > 0 THEN 1
+                ELSE 0
+            END) as max_h
+        FROM production_reports 
+        WHERE devition_id = ? AND report_date = ?
+        AND unit_id NOT IN (996, 997, 998, 999)
+    ";
+    $stmt_mh = $conn->prepare($max_hour_query);
+    $stmt_mh->execute([$selected_division, $selected_date]);
+    $result_mh = $stmt_mh->fetch(PDO::FETCH_ASSOC);
+    if ($result_mh && $result_mh['max_h'] > 0) {
+        $work_hours = (int)$result_mh['max_h'];
+    }
+} catch (Exception $e) {
+    $work_hours = 10;
+}
+$work_hours = max(1, min(11, $work_hours));
+
+// ============================================================
+// MATCH OUT DATA (Shirt/Trouser only)
+// ============================================================
+$shirt_match_out_carder = 0;
+$shirt_match_out_smv = 0;
+$trouser_match_out_carder = 0;
+$trouser_match_out_smv = 0;
+
+try {
+    $shirt_components = getComponents($conn, 1);
+    $shirt_match_out = calculateMatchOutFixed($conn, 1, $selected_date, $work_hours, $shirt_components);
+    $shirt_match_out_carder = (int)($shirt_match_out['unit_carder'] ?? 0);
+    $shirt_match_out_smv = (float)($shirt_match_out['unit_smv'] ?? 0);
+} catch (Exception $e) {}
+
+try {
+    $trouser_components = getComponents($conn, 2);
+    $trouser_match_out = calculateMatchOutFixed($conn, 2, $selected_date, $work_hours, $trouser_components);
+    $trouser_match_out_carder = (int)($trouser_match_out['unit_carder'] ?? 0);
+    $trouser_match_out_smv = (float)($trouser_match_out['unit_smv'] ?? 0);
+} catch (Exception $e) {}
 
 // ============================================================
 // HELPER FUNCTIONS
 // ============================================================
 
-function getSingleComponentData($conn, $division_id, $date, $work_hours, $component_name) {
+/**
+ * Compute profit for a component using the correct formula
+ */
+function computeProfit($data, $division_type, $comp_name = '', $total_assemble_carder = null) {
+    $day_total = (float)($data['day_total'] ?? 0);
+    $unit_carder = (int)($data['unit_carder'] ?? 0);
+    $unit_smv = (float)($data['unit_smv'] ?? 0);
+    $plan_hours = (float)($data['plan_hours'] ?? 0);
+    $worked_hours = (float)($data['worked_hours'] ?? 0);
+    $epm = (float)($data['epm'] ?? 13.2);
+    
+    $comp_upper = strtoupper(trim($comp_name));
+    
+    if ($division_type === 'assembly') {
+        $tac = $total_assemble_carder !== null ? $total_assemble_carder : $unit_carder;
+        
+        $multiplier = 500;
+        if ($comp_upper === 'SHIRT MTM') $multiplier = 1100;
+        elseif ($comp_upper === 'TROUSER') $multiplier = 800;
+        elseif ($comp_upper === 'TROUSER MTM') $multiplier = 1500;
+        elseif ($comp_upper === 'COAT') $multiplier = 2800;
+        elseif ($comp_upper === 'COAT MTM') $multiplier = 3400;
+        elseif ($comp_upper === 'KNIT') $multiplier = 295;
+        
+        return ($multiplier * $day_total) - (7365 * $tac);
+    } else {
+        // Shirt/Trouser/Coat divisions - 90% target formula
+        if ($plan_hours > 0) {
+            return ($epm * ($day_total * $unit_smv)) - (7365 * $unit_carder) * ($worked_hours / $plan_hours);
+        } else {
+            return ($epm * ($day_total * $unit_smv)) - (7365 * $unit_carder);
+        }
+    }
+}
+
+/**
+ * Get single component data by name
+ */
+function getComponentByName($conn, $division_id, $date, $component_name) {
     $components = getComponents($conn, $division_id);
     foreach ($components as $comp) {
         if ($comp['is_match_out']) continue;
@@ -39,392 +133,303 @@ function getSingleComponentData($conn, $division_id, $date, $work_hours, $compon
             $data = getReportData($conn, $division_id, $comp['id'], $date);
             $data['name'] = $comp['name'];
             $data['component_id'] = $comp['id'];
-            
             for ($h = 1; $h <= 11; $h++) {
                 $data["hour_$h"] = (float)($data["hour_$h"] ?? 0);
             }
-            $data['unit_carder'] = (int)($data['unit_carder'] ?? 0);
-            $data['acvd_eff'] = (float)($data['acvd_eff'] ?? 0);
-            $data['day_total'] = (float)($data['day_total'] ?? 0);
-            $data['profit'] = (float)($data['profit'] ?? 0);
             return $data;
         }
     }
     return null;
 }
 
-function getMatchOutData($conn, $division_id, $date, $work_hours) {
-    $match_out = getReportData($conn, $division_id, 999, $date);
+/**
+ * Get Match Out data
+ */
+function getMatchOutData($conn, $division_id, $date) {
+    $mo = getReportData($conn, $division_id, 999, $date);
     for ($h = 1; $h <= 11; $h++) {
-        $match_out["hour_$h"] = (float)($match_out["hour_$h"] ?? 0);
+        $mo["hour_$h"] = (float)($mo["hour_$h"] ?? 0);
     }
-    $match_out['unit_carder'] = (int)($match_out['unit_carder'] ?? 0);
-    $match_out['acvd_eff'] = (float)($match_out['acvd_eff'] ?? 0);
-    $match_out['day_total'] = (float)($match_out['day_total'] ?? 0);
-    return $match_out;
+    return $mo;
 }
 
+/**
+ * Compute DHU from data
+ */
 function computeDHU($data) {
     $day_total = (float)($data['day_total'] ?? 0);
     return $day_total > 0 ? round(($day_total / 100) * 5, 1) : 0;
 }
 
-// ============================================================
-// BUILD TABLES DATA
-// ============================================================
+/**
+ * Build a column array from component data
+ */
+function buildColumn($name, $data, $division_type, $total_assemble_carder = null) {
+    $hours = [];
+    for ($h = 1; $h <= 11; $h++) {
+        $hours[] = (float)($data["hour_$h"] ?? 0);
+    }
+    
+    $unit_carder = (int)($data['unit_carder'] ?? 0);
+    $unit_smv = (float)($data['unit_smv'] ?? 0);
+    $plan_hours = (float)($data['plan_hours'] ?? 0);
+    $worked_hours = (float)($data['worked_hours'] ?? 0);
+    $ttl_sam_pc = (float)($data['ttl_sam_pc'] ?? 0);
+    
+    $day_total = 0;
+    for ($h = 1; $h <= 11; $h++) $day_total += (float)($data["hour_$h"] ?? 0);
+    
+    $available_minutes = 0;
+    $acvd_eff = 0;
+    
+    if ($division_type === 'assembly') {
+        $tac = $total_assemble_carder !== null ? $total_assemble_carder : $unit_carder;
+        $available_minutes = $tac * $plan_hours * 60;
+        $ern_minutes = $day_total * $ttl_sam_pc;
+        if ($available_minutes > 0 && $plan_hours > 0) {
+            $denominator = $available_minutes * ($worked_hours / $plan_hours);
+            $acvd_eff = ($denominator > 0) ? ($ern_minutes / $denominator) : 0;
+        }
+    } else {
+        $available_minutes = $unit_carder * $plan_hours * 60;
+        $ern_minutes = $day_total * $unit_smv;
+        $denominator = 1;
+        if ($available_minutes > 0 && $plan_hours > 0) {
+            $denominator = ($available_minutes / $plan_hours) * $worked_hours;
+        }
+        $acvd_eff = ($denominator > 0) ? ($ern_minutes / $denominator) : 0;
+    }
+    
+    return [
+        'name' => $name,
+        'pcs' => $day_total,
+        'eff' => $acvd_eff * 100,
+        'carder' => $unit_carder,
+        'dhu' => computeDHU($data),
+        'hours' => $hours,
+        'profit' => computeProfit($data, $division_type, $name, $total_assemble_carder),
+        'type' => ($division_type === 'assembly') ? 'assembly' : 'component'
+    ];
+}
 
-$table1_columns = [];   // Main table columns
-$table2_columns = [];   // MTM / secondary table columns
+/**
+ * Empty column placeholder
+ */
+function emptyColumn($name, $type = 'component') {
+    return [
+        'name' => $name,
+        'pcs' => 0,
+        'eff' => 0,
+        'carder' => 0,
+        'dhu' => 0,
+        'hours' => array_fill(0, 11, 0),
+        'profit' => 0,
+        'type' => $type
+    ];
+}
+
+/**
+ * Compute Match Out profit = sum of MAIN division component profits only
+ * (excludes assembly columns)
+ */
+function computeMatchOutProfit($main_columns) {
+    $sum = 0;
+    foreach ($main_columns as $col) {
+        // Only include main division components (not assembly, not match_out)
+        if (($col['type'] ?? '') === 'component') {
+            $sum += (float)($col['profit'] ?? 0);
+        }
+    }
+    return $sum;
+}
+
+// ============================================================
+// BUILD TABLES
+// ============================================================
+$table1_columns = [];
+$table2_columns = [];
 
 if ($selected_division == 1) {
     // SHIRT MAIN: Front | Back | Collar | Sleeve | Cuff | Match Out | Assembly SHIRT
-    $shirt_order = ['Front', 'Back', 'Collar', 'Sleeve', 'Cuff'];
-    foreach ($shirt_order as $name) {
-        $comp_data = getSingleComponentData($conn, 1, $selected_date, $work_hours, $name);
-        if ($comp_data) {
-            $table1_columns[] = [
-                'name' => $name,
-                'pcs' => $comp_data['day_total'],
-                'eff' => $comp_data['acvd_eff'] * 100,
-                'carder' => $comp_data['unit_carder'],
-                'dhu' => computeDHU($comp_data),
-                'hours' => array_map(function($h) use ($comp_data) { return $comp_data["hour_$h"] ?? 0; }, range(1, $work_hours)),
-                'profit' => $comp_data['profit'],
-                'type' => 'component'
-            ];
-        } else {
-            $table1_columns[] = [
-                'name' => $name, 'pcs' => 0, 'eff' => 0, 'carder' => 0, 'dhu' => 0,
-                'hours' => array_fill(0, $work_hours, 0), 'profit' => 0, 'type' => 'component'
-            ];
-        }
+    foreach (['Front', 'Back', 'Collar', 'Sleeve', 'Cuff'] as $name) {
+        $cd = getComponentByName($conn, 1, $selected_date, $name);
+        $table1_columns[] = $cd ? buildColumn($name, $cd, 'shirt') : emptyColumn($name);
     }
     
-    // Match Out
-    $mo_data = getMatchOutData($conn, 1, $selected_date, $work_hours);
-    $mo_hourly = [];
-    for ($h = 1; $h <= $work_hours; $h++) {
-        $mo_hourly[] = $mo_data["hour_$h"] ?? 0;
-    }
-    $table1_columns[] = [
-        'name' => 'Match Out',
-        'pcs' => $mo_data['day_total'] ?? 0,
-        'eff' => ($mo_data['acvd_eff'] ?? 0) * 100,
-        'carder' => $mo_data['unit_carder'] ?? 0,
-        'dhu' => computeDHU($mo_data),
-        'hours' => $mo_hourly,
-        'profit' => $mo_data['profit'] ?? 0,
-        'type' => 'match_out'
-    ];
+    // ✅ Match Out profit = sum of Front+Back+Collar+Sleeve+Cuff
+    $mo = getMatchOutData($conn, 1, $selected_date);
+    $mo_col = buildColumn('Match Out', $mo, 'shirt');
+    $mo_col['type'] = 'match_out';
+    $mo_col['profit'] = computeMatchOutProfit($table1_columns);
+    $table1_columns[] = $mo_col;
     
-    // Assembly SHIRT
-    $asm_shirt = getSingleComponentData($conn, 7, $selected_date, $work_hours, 'SHIRT');
+    // Assembly SHIRT — TAC = own carder + match out carder
+    $asm_shirt = getComponentByName($conn, 7, $selected_date, 'SHIRT');
     if ($asm_shirt) {
-        $asm_shirt_hours = [];
-        for ($h = 1; $h <= $work_hours; $h++) {
-            $asm_shirt_hours[] = $asm_shirt["hour_$h"] ?? 0;
-        }
-        $table1_columns[] = [
-            'name' => 'Assembly SHIRT',
-            'pcs' => $asm_shirt['day_total'],
-            'eff' => $asm_shirt['acvd_eff'] * 100,
-            'carder' => $asm_shirt['unit_carder'],
-            'dhu' => computeDHU($asm_shirt),
-            'hours' => $asm_shirt_hours,
-            'profit' => $asm_shirt['profit'],
-            'type' => 'assembly'
-        ];
+        $tac_shirt = ((int)($asm_shirt['unit_carder'] ?? 0)) + $shirt_match_out_carder;
+        $col = buildColumn('Assembly SHIRT', $asm_shirt, 'assembly', $tac_shirt);
+        $col['type'] = 'assembly';
+        $table1_columns[] = $col;
     } else {
-        $table1_columns[] = [
-            'name' => 'Assembly SHIRT', 'pcs' => 0, 'eff' => 0, 'carder' => 0, 'dhu' => 0,
-            'hours' => array_fill(0, $work_hours, 0), 'profit' => 0, 'type' => 'assembly'
-        ];
+        $table1_columns[] = emptyColumn('Assembly SHIRT', 'assembly');
     }
     
     // SHIRT MTM (Table 2)
-    $shirt_mtm = getSingleComponentData($conn, 7, $selected_date, $work_hours, 'SHIRT MTM');
+    $shirt_mtm = getComponentByName($conn, 7, $selected_date, 'SHIRT MTM');
     if ($shirt_mtm) {
-        $shirt_mtm_hours = [];
-        for ($h = 1; $h <= $work_hours; $h++) {
-            $shirt_mtm_hours[] = $shirt_mtm["hour_$h"] ?? 0;
-        }
-        $table2_columns[] = [
-            'name' => 'SHIRT MTM',
-            'pcs' => $shirt_mtm['day_total'],
-            'eff' => $shirt_mtm['acvd_eff'] * 100,
-            'carder' => $shirt_mtm['unit_carder'],
-            'dhu' => computeDHU($shirt_mtm),
-            'hours' => $shirt_mtm_hours,
-            'profit' => $shirt_mtm['profit'],
-            'type' => 'assembly'
-        ];
+        $col = buildColumn('SHIRT MTM', $shirt_mtm, 'assembly');
+        $col['type'] = 'assembly';
+        $table2_columns[] = $col;
     } else {
-        $table2_columns[] = [
-            'name' => 'SHIRT MTM', 'pcs' => 0, 'eff' => 0, 'carder' => 0, 'dhu' => 0,
-            'hours' => array_fill(0, $work_hours, 0), 'profit' => 0, 'type' => 'assembly'
-        ];
+        $table2_columns[] = emptyColumn('SHIRT MTM', 'assembly');
     }
     
 } elseif ($selected_division == 2) {
     // TROUSER MAIN: Front | Back | Band | Match Out | Assembly TROUSER
-    $trouser_order = ['Front', 'Back', 'Band'];
-    foreach ($trouser_order as $name) {
-        $comp_data = getSingleComponentData($conn, 2, $selected_date, $work_hours, $name);
-        if ($comp_data) {
-            $table1_columns[] = [
-                'name' => $name,
-                'pcs' => $comp_data['day_total'],
-                'eff' => $comp_data['acvd_eff'] * 100,
-                'carder' => $comp_data['unit_carder'],
-                'dhu' => computeDHU($comp_data),
-                'hours' => array_map(function($h) use ($comp_data) { return $comp_data["hour_$h"] ?? 0; }, range(1, $work_hours)),
-                'profit' => $comp_data['profit'],
-                'type' => 'component'
-            ];
-        } else {
-            $table1_columns[] = [
-                'name' => $name, 'pcs' => 0, 'eff' => 0, 'carder' => 0, 'dhu' => 0,
-                'hours' => array_fill(0, $work_hours, 0), 'profit' => 0, 'type' => 'component'
-            ];
-        }
+    foreach (['Front', 'Back', 'Band'] as $name) {
+        $cd = getComponentByName($conn, 2, $selected_date, $name);
+        $table1_columns[] = $cd ? buildColumn($name, $cd, 'trouser') : emptyColumn($name);
     }
     
-    // Match Out
-    $mo_data = getMatchOutData($conn, 2, $selected_date, $work_hours);
-    $mo_hourly = [];
-    for ($h = 1; $h <= $work_hours; $h++) {
-        $mo_hourly[] = $mo_data["hour_$h"] ?? 0;
-    }
-    $table1_columns[] = [
-        'name' => 'Match Out',
-        'pcs' => $mo_data['day_total'] ?? 0,
-        'eff' => ($mo_data['acvd_eff'] ?? 0) * 100,
-        'carder' => $mo_data['unit_carder'] ?? 0,
-        'dhu' => computeDHU($mo_data),
-        'hours' => $mo_hourly,
-        'profit' => $mo_data['profit'] ?? 0,
-        'type' => 'match_out'
-    ];
+    // ✅ Match Out profit = sum of Front+Back+Band
+    $mo = getMatchOutData($conn, 2, $selected_date);
+    $mo_col = buildColumn('Match Out', $mo, 'trouser');
+    $mo_col['type'] = 'match_out';
+    $mo_col['profit'] = computeMatchOutProfit($table1_columns);
+    $table1_columns[] = $mo_col;
     
-    // Assembly TROUSER
-    $asm_trouser = getSingleComponentData($conn, 7, $selected_date, $work_hours, 'TROUSER');
+    // Assembly TROUSER — TAC = own carder + match out carder
+    $asm_trouser = getComponentByName($conn, 7, $selected_date, 'TROUSER');
     if ($asm_trouser) {
-        $asm_trouser_hours = [];
-        for ($h = 1; $h <= $work_hours; $h++) {
-            $asm_trouser_hours[] = $asm_trouser["hour_$h"] ?? 0;
-        }
-        $table1_columns[] = [
-            'name' => 'Assembly TROUSER',
-            'pcs' => $asm_trouser['day_total'],
-            'eff' => $asm_trouser['acvd_eff'] * 100,
-            'carder' => $asm_trouser['unit_carder'],
-            'dhu' => computeDHU($asm_trouser),
-            'hours' => $asm_trouser_hours,
-            'profit' => $asm_trouser['profit'],
-            'type' => 'assembly'
-        ];
+        $tac_trouser = ((int)($asm_trouser['unit_carder'] ?? 0)) + $trouser_match_out_carder;
+        $col = buildColumn('Assembly TROUSER', $asm_trouser, 'assembly', $tac_trouser);
+        $col['type'] = 'assembly';
+        $table1_columns[] = $col;
     } else {
-        $table1_columns[] = [
-            'name' => 'Assembly TROUSER', 'pcs' => 0, 'eff' => 0, 'carder' => 0, 'dhu' => 0,
-            'hours' => array_fill(0, $work_hours, 0), 'profit' => 0, 'type' => 'assembly'
-        ];
+        $table1_columns[] = emptyColumn('Assembly TROUSER', 'assembly');
     }
     
     // TROUSER MTM (Table 2)
-    $trouser_mtm = getSingleComponentData($conn, 7, $selected_date, $work_hours, 'TROUSER MTM');
+    $trouser_mtm = getComponentByName($conn, 7, $selected_date, 'TROUSER MTM');
     if ($trouser_mtm) {
-        $trouser_mtm_hours = [];
-        for ($h = 1; $h <= $work_hours; $h++) {
-            $trouser_mtm_hours[] = $trouser_mtm["hour_$h"] ?? 0;
-        }
-        $table2_columns[] = [
-            'name' => 'TROUSER MTM',
-            'pcs' => $trouser_mtm['day_total'],
-            'eff' => $trouser_mtm['acvd_eff'] * 100,
-            'carder' => $trouser_mtm['unit_carder'],
-            'dhu' => computeDHU($trouser_mtm),
-            'hours' => $trouser_mtm_hours,
-            'profit' => $trouser_mtm['profit'],
-            'type' => 'assembly'
-        ];
+        $col = buildColumn('TROUSER MTM', $trouser_mtm, 'assembly');
+        $col['type'] = 'assembly';
+        $table2_columns[] = $col;
     } else {
-        $table2_columns[] = [
-            'name' => 'TROUSER MTM', 'pcs' => 0, 'eff' => 0, 'carder' => 0, 'dhu' => 0,
-            'hours' => array_fill(0, $work_hours, 0), 'profit' => 0, 'type' => 'assembly'
-        ];
+        $table2_columns[] = emptyColumn('TROUSER MTM', 'assembly');
     }
     
 } elseif ($selected_division == 3) {
     // COAT MAIN (from Assembly): COAT
-    $coat_data = getSingleComponentData($conn, 7, $selected_date, $work_hours, 'COAT');
-    if ($coat_data) {
-        $coat_hours = [];
-        for ($h = 1; $h <= $work_hours; $h++) {
-            $coat_hours[] = $coat_data["hour_$h"] ?? 0;
-        }
-        $table1_columns[] = [
-            'name' => 'COAT',
-            'pcs' => $coat_data['day_total'],
-            'eff' => $coat_data['acvd_eff'] * 100,
-            'carder' => $coat_data['unit_carder'],
-            'dhu' => computeDHU($coat_data),
-            'hours' => $coat_hours,
-            'profit' => $coat_data['profit'],
-            'type' => 'assembly'
-        ];
+    $coat = getComponentByName($conn, 7, $selected_date, 'COAT');
+    if ($coat) {
+        $col = buildColumn('COAT', $coat, 'assembly');
+        $col['type'] = 'assembly';
+        $table1_columns[] = $col;
     } else {
-        $table1_columns[] = [
-            'name' => 'COAT', 'pcs' => 0, 'eff' => 0, 'carder' => 0, 'dhu' => 0,
-            'hours' => array_fill(0, $work_hours, 0), 'profit' => 0, 'type' => 'assembly'
-        ];
+        $table1_columns[] = emptyColumn('COAT', 'assembly');
     }
     
     // COAT MTM (Table 2)
-    $coat_mtm = getSingleComponentData($conn, 7, $selected_date, $work_hours, 'COAT MTM');
+    $coat_mtm = getComponentByName($conn, 7, $selected_date, 'COAT MTM');
     if ($coat_mtm) {
-        $coat_mtm_hours = [];
-        for ($h = 1; $h <= $work_hours; $h++) {
-            $coat_mtm_hours[] = $coat_mtm["hour_$h"] ?? 0;
-        }
-        $table2_columns[] = [
-            'name' => 'COAT MTM',
-            'pcs' => $coat_mtm['day_total'],
-            'eff' => $coat_mtm['acvd_eff'] * 100,
-            'carder' => $coat_mtm['unit_carder'],
-            'dhu' => computeDHU($coat_mtm),
-            'hours' => $coat_mtm_hours,
-            'profit' => $coat_mtm['profit'],
-            'type' => 'assembly'
-        ];
+        $col = buildColumn('COAT MTM', $coat_mtm, 'assembly');
+        $col['type'] = 'assembly';
+        $table2_columns[] = $col;
     } else {
-        $table2_columns[] = [
-            'name' => 'COAT MTM', 'pcs' => 0, 'eff' => 0, 'carder' => 0, 'dhu' => 0,
-            'hours' => array_fill(0, $work_hours, 0), 'profit' => 0, 'type' => 'assembly'
-        ];
+        $table2_columns[] = emptyColumn('COAT MTM', 'assembly');
     }
     
 } elseif ($selected_division == 7) {
     // ASSEMBLY: SHIRT | SHIRT MTM | TROUSER | TROUSER MTM | COAT | COAT MTM | KNIT
     $assembly_order = ['SHIRT', 'SHIRT MTM', 'TROUSER', 'TROUSER MTM', 'COAT', 'COAT MTM', 'KNIT'];
     foreach ($assembly_order as $name) {
-        $comp_data = getSingleComponentData($conn, 7, $selected_date, $work_hours, $name);
-        if ($comp_data) {
-            $hours_arr = [];
-            for ($h = 1; $h <= $work_hours; $h++) {
-                $hours_arr[] = $comp_data["hour_$h"] ?? 0;
+        $cd = getComponentByName($conn, 7, $selected_date, $name);
+        if ($cd) {
+            $tac = (int)($cd['unit_carder'] ?? 0);
+            if ($name === 'SHIRT') {
+                $tac += $shirt_match_out_carder;
+            } elseif ($name === 'TROUSER') {
+                $tac += $trouser_match_out_carder;
             }
-            $table1_columns[] = [
-                'name' => $name,
-                'pcs' => $comp_data['day_total'],
-                'eff' => $comp_data['acvd_eff'] * 100,
-                'carder' => $comp_data['unit_carder'],
-                'dhu' => computeDHU($comp_data),
-                'hours' => $hours_arr,
-                'profit' => $comp_data['profit'],
-                'type' => 'component'
-            ];
+            $col = buildColumn($name, $cd, 'assembly', $tac);
+            $col['type'] = 'component';
+            $table1_columns[] = $col;
         } else {
-            $table1_columns[] = [
-                'name' => $name, 'pcs' => 0, 'eff' => 0, 'carder' => 0, 'dhu' => 0,
-                'hours' => array_fill(0, $work_hours, 0), 'profit' => 0, 'type' => 'component'
-            ];
+            $table1_columns[] = emptyColumn($name, 'component');
         }
     }
 }
 
 // ============================================================
-// CALCULATE DIVISION AGGREGATES FOR CHARTS
+// AGGREGATES FOR STATS AND CHARTS
 // ============================================================
-$division_name = $division_names[$selected_division] ?? 'Division';
-$is_assembly = ($selected_division == 7);
-
-// Combine all table columns for charts
 $all_columns = array_merge($table1_columns, $table2_columns);
 
-// Hourly production (sum all hours)
+$total_pcs_display = 0;
+$avg_eff_sum = 0;
+$avg_eff_count = 0;
+$dhu_sum = 0;
+$dhu_count = 0;
+$total_profit = 0;
+
+foreach ($all_columns as $col) {
+    $total_pcs_display += $col['pcs'];
+    if ($col['eff'] > 0) {
+        $avg_eff_sum += $col['eff'];
+        $avg_eff_count++;
+    }
+    if ($col['dhu'] > 0) {
+        $dhu_sum += $col['dhu'];
+        $dhu_count++;
+    }
+    // Skip Match Out from total profit (it's a sum of components already)
+    if (($col['type'] ?? '') !== 'match_out') {
+        $total_profit += $col['profit'];
+    }
+}
+
+$avg_eff_display = $avg_eff_count > 0 ? round($avg_eff_sum / $avg_eff_count, 1) : 0;
+$avg_dhu_display = $dhu_count > 0 ? round($dhu_sum / $dhu_count, 1) : 0;
+
+// Hourly aggregates
 $hourly_production = array_fill(1, $work_hours, 0);
 $hourly_dhu = array_fill(1, $work_hours, 0);
 $hourly_eff_sum = array_fill(1, $work_hours, 0);
 $col_count = 0;
-$total_pcs = 0;
-$total_ern = 0;
+$total_pcs_for_dhu = 0;
 
 foreach ($all_columns as $col) {
     if ($col['pcs'] > 0 || $col['carder'] > 0) {
         $col_count++;
-        $total_pcs += $col['pcs'];
-        
         for ($h = 0; $h < $work_hours; $h++) {
             $hourly_production[$h + 1] += $col['hours'][$h] ?? 0;
         }
+        if ($col['eff'] > 0) {
+            for ($h = 1; $h <= $work_hours; $h++) {
+                $hourly_eff_sum[$h] += $col['eff'];
+            }
+        }
     }
-}
-
-// Simple averages per hour
-if ($col_count > 0) {
-    for ($h = 1; $h <= $work_hours; $h++) {
-        $hourly_production[$h] = round($hourly_production[$h] / $col_count, 0);
-    }
-}
-
-// DHU per hour: average of component DHU weighted by their pcs
-$total_pcs_for_dhu = 0;
-foreach ($all_columns as $col) {
-    $col_pcs = $col['pcs'] ?? 0;
-    if ($col_pcs > 0) {
-        $total_pcs_for_dhu += $col_pcs;
+    if ($col['pcs'] > 0) {
+        $total_pcs_for_dhu += $col['pcs'];
         for ($h = 0; $h < $work_hours; $h++) {
             $hourly_dhu[$h + 1] += (($col['hours'][$h] ?? 0) / 100) * 5;
         }
     }
 }
 
+if ($col_count > 0) {
+    for ($h = 1; $h <= $work_hours; $h++) {
+        $hourly_production[$h] = round($hourly_production[$h] / $col_count, 0);
+        $hourly_eff_sum[$h] = $avg_eff_display > 0 ? $avg_eff_display : 0;
+    }
+}
 if ($total_pcs_for_dhu > 0) {
     for ($h = 1; $h <= $work_hours; $h++) {
         $hourly_dhu[$h] = round(($hourly_dhu[$h] / $total_pcs_for_dhu) * 100, 1);
     }
 }
-
-// Efficiency per hour: average of component efficiencies
-$eff_count = 0;
-foreach ($all_columns as $col) {
-    if (($col['eff'] ?? 0) > 0) {
-        $eff_count++;
-        for ($h = 1; $h <= $work_hours; $h++) {
-            $hourly_eff_sum[$h] += $col['eff'];
-        }
-    }
-}
-if ($eff_count > 0) {
-    for ($h = 1; $h <= $work_hours; $h++) {
-        $hourly_eff_sum[$h] = round($hourly_eff_sum[$h] / $eff_count, 1);
-    }
-}
-
-// Overall stats
-$total_pcs_display = 0;
-$avg_eff_display = 0;
-$avg_dhu_display = 0;
-$eff_counter = 0;
-$dhu_counter = 0;
-$dhu_sum = 0;
-
-foreach ($all_columns as $col) {
-    if (($col['pcs'] ?? 0) > 0 || ($col['eff'] ?? 0) > 0) {
-        $total_pcs_display += $col['pcs'];
-        if ($col['eff'] > 0) {
-            $avg_eff_display += $col['eff'];
-            $eff_counter++;
-        }
-        if ($col['dhu'] > 0) {
-            $dhu_sum += $col['dhu'];
-            $dhu_counter++;
-        }
-    }
-}
-
-$avg_eff_display = $eff_counter > 0 ? round($avg_eff_display / $eff_counter, 1) : 0;
-$avg_dhu_display = $dhu_counter > 0 ? round($dhu_sum / $dhu_counter, 1) : 0;
 
 // ============================================================
 // TREND DATA
@@ -445,16 +450,30 @@ try {
     $dates = array_reverse($dates);
     
     foreach ($dates as $d) {
-        $stmt2 = $conn->prepare("SELECT SUM(day_total) as total_pcs, AVG(acvd_eff) as avg_eff FROM production_reports WHERE devition_id = ? AND report_date = ? AND unit_id NOT IN (996, 997, 998, 999)");
+        $stmt2 = $conn->prepare("
+            SELECT 
+                SUM(day_total) as total_pcs, 
+                AVG(acvd_eff) as avg_eff,
+                SUM(day_total) as pcs_for_dhu,
+                SUM((day_total / 100) * 5) as dhu_sum
+            FROM production_reports 
+            WHERE devition_id = ? AND report_date = ? 
+            AND unit_id NOT IN (996, 997, 998, 999)
+            AND day_total > 0
+        ");
         $stmt2->execute([$selected_division, $d]);
         $row = $stmt2->fetch(PDO::FETCH_ASSOC);
         
+        $total_pcs = (float)($row['total_pcs'] ?? 0);
+        $avg_eff = (float)($row['avg_eff'] ?? 0) * 100;
+        $dhu_val = ($row['pcs_for_dhu'] > 0) ? round(($row['dhu_sum'] / $row['pcs_for_dhu']) * 100, 1) : 0;
+        
         $trend_data['production'][] = [
             'date' => $d,
-            'pcs' => (float)($row['total_pcs'] ?? 0),
-            'eff' => (float)($row['avg_eff'] ?? 0) * 100
+            'pcs' => $total_pcs,
+            'eff' => $avg_eff
         ];
-        $trend_data['dhu'][] = ['date' => $d, 'dhu' => 0];
+        $trend_data['dhu'][] = ['date' => $d, 'dhu' => $dhu_val];
     }
 } catch (Exception $e) {
     error_log("Trend error: " . $e->getMessage());
@@ -465,10 +484,13 @@ if (empty($trend_data['production'])) {
     $trend_data['dhu'] = [['date' => date('Y-m-d'), 'dhu' => 0]];
 }
 
+// ============================================================
+// DISPLAY VARIABLES
+// ============================================================
+$division_name = $division_names[$selected_division] ?? 'Division';
 $display_date = date('M d, Y', strtotime($selected_date));
 $has_data = ($total_pcs_display > 0 || $col_count > 0);
 
-// Prepare chart data
 $chart_labels = range(1, $work_hours);
 $production_data = array_values($hourly_production);
 $eff_data = array_values($hourly_eff_sum);
@@ -655,9 +677,7 @@ $trend_dhu_data = array_map(function($i) { return $i['dhu']; }, $trend_data['dhu
         </div>
         <?php endif; ?>
 
-        <!-- ============================================================ -->
         <!-- TABLE 1: MAIN -->
-        <!-- ============================================================ -->
         <?php if (!empty($table1_columns)): ?>
         <?php if (count($table2_columns) > 0): ?>
         <div class="table-section-title">📋 <?php echo strtoupper($division_name); ?> - MAIN</div>
@@ -683,7 +703,6 @@ $trend_dhu_data = array_map(function($i) { return $i['dhu']; }, $trend_data['dhu
                 </tr>
             </thead>
             <tbody>
-                <!-- DIRECTS-BUDGET -->
                 <tr class="header-row">
                     <td style="text-align:left;">DIRECTS-BUDGET</td>
                     <?php foreach ($table1_columns as $col): ?>
@@ -691,7 +710,6 @@ $trend_dhu_data = array_map(function($i) { return $i['dhu']; }, $trend_data['dhu
                     <?php endforeach; ?>
                     <td>—</td>
                 </tr>
-                <!-- DIRECTS-PRESENT -->
                 <tr class="header-row">
                     <td style="text-align:left;">DIRECTS-PRESENT</td>
                     <?php foreach ($table1_columns as $col): ?>
@@ -699,7 +717,6 @@ $trend_dhu_data = array_map(function($i) { return $i['dhu']; }, $trend_data['dhu
                     <?php endforeach; ?>
                     <td>—</td>
                 </tr>
-                <!-- ABSENTEEISM -->
                 <tr class="header-row">
                     <td style="text-align:left;">ABSENTEESM</td>
                     <?php foreach ($table1_columns as $col): ?>
@@ -707,7 +724,6 @@ $trend_dhu_data = array_map(function($i) { return $i['dhu']; }, $trend_data['dhu
                     <?php endforeach; ?>
                     <td>—</td>
                 </tr>
-                <!-- HOURS -->
                 <?php for ($h = 1; $h <= $work_hours; $h++): ?>
                 <tr>
                     <td style="font-weight:700;"><?php echo $h; ?></td>
@@ -722,7 +738,6 @@ $trend_dhu_data = array_map(function($i) { return $i['dhu']; }, $trend_data['dhu
                     <td><?php echo number_format($hourly_dhu[$h] ?? 0, 1); ?>%</td>
                 </tr>
                 <?php endfor; ?>
-                <!-- AVERAGE -->
                 <tr class="total-row">
                     <td style="font-weight:700;">Average</td>
                     <?php foreach ($table1_columns as $col): 
@@ -734,13 +749,14 @@ $trend_dhu_data = array_map(function($i) { return $i['dhu']; }, $trend_data['dhu
                     <?php endforeach; ?>
                     <td style="font-weight:700;color:var(--dhu-color);"><?php echo number_format($avg_dhu_display, 1); ?>%</td>
                 </tr>
-                <!-- LOSS/PROFIT -->
+                <!-- PROFIT ROW -->
                 <tr class="loss-row">
-                    <td style="font-weight:700;">LOSS/PROFIT</td>
+                    <td style="font-weight:700;">PROFIT</td>
                     <?php foreach ($table1_columns as $col): 
-                        $loss = round(($col['pcs'] ?? 0) * 0.246, 0);
+                        $profit = round($col['profit']);
+                        $color = $profit >= 0 ? '#28a745' : '#dc3545';
                     ?>
-                    <td colspan="2">LKR <?php echo number_format($loss); ?></td>
+                    <td colspan="2" style="font-weight:700; color:<?php echo $color; ?>;">LKR <?php echo number_format($profit); ?></td>
                     <?php endforeach; ?>
                     <td>—</td>
                 </tr>
@@ -748,9 +764,7 @@ $trend_dhu_data = array_map(function($i) { return $i['dhu']; }, $trend_data['dhu
         </table>
         <?php endif; ?>
 
-        <!-- ============================================================ -->
         <!-- TABLE 2: MTM -->
-        <!-- ============================================================ -->
         <?php if (!empty($table2_columns)): ?>
         <div class="table-section-title">📋 <?php echo strtoupper($division_name); ?> - MTM</div>
         
@@ -802,7 +816,7 @@ $trend_dhu_data = array_map(function($i) { return $i['dhu']; }, $trend_data['dhu
                     <td><?php echo number_format($pcs, 0); ?></td>
                     <td class="<?php echo $eff_class; ?>"><?php echo number_format($eff, 1); ?>%</td>
                     <?php endforeach; ?>
-                    <td><?php echo number_format(computeDHU($table2_columns[0] ?? []), 1); ?>%</td>
+                    <td><?php echo number_format(($table2_columns[0]['dhu'] ?? 0), 1); ?>%</td>
                 </tr>
                 <?php endfor; ?>
                 <tr class="total-row">
@@ -814,14 +828,15 @@ $trend_dhu_data = array_map(function($i) { return $i['dhu']; }, $trend_data['dhu
                     <td style="font-weight:700;"><?php echo number_format($col['pcs'], 0); ?></td>
                     <td class="<?php echo $eff_class; ?>" style="font-weight:700;"><?php echo number_format($eff, 1); ?>%</td>
                     <?php endforeach; ?>
-                    <td style="font-weight:700;color:var(--dhu-color);"><?php echo number_format(computeDHU($table2_columns[0] ?? []), 1); ?>%</td>
+                    <td style="font-weight:700;color:var(--dhu-color);"><?php echo number_format(($table2_columns[0]['dhu'] ?? 0), 1); ?>%</td>
                 </tr>
                 <tr class="loss-row">
-                    <td style="font-weight:700;">LOSS/PROFIT</td>
+                    <td style="font-weight:700;">PROFIT</td>
                     <?php foreach ($table2_columns as $col): 
-                        $loss = round(($col['pcs'] ?? 0) * 0.246, 0);
+                        $profit = round($col['profit']);
+                        $color = $profit >= 0 ? '#28a745' : '#dc3545';
                     ?>
-                    <td colspan="2">LKR <?php echo number_format($loss); ?></td>
+                    <td colspan="2" style="font-weight:700; color:<?php echo $color; ?>;">LKR <?php echo number_format($profit); ?></td>
                     <?php endforeach; ?>
                     <td>—</td>
                 </tr>
@@ -829,9 +844,7 @@ $trend_dhu_data = array_map(function($i) { return $i['dhu']; }, $trend_data['dhu
         </table>
         <?php endif; ?>
 
-        <!-- ============================================================ -->
         <!-- CHARTS -->
-        <!-- ============================================================ -->
         <div class="chart-grid">
             <div class="chart-card">
                 <h4>📈 PRODUCTION - HOURLY PROGRESS</h4>
@@ -854,9 +867,9 @@ $trend_dhu_data = array_map(function($i) { return $i['dhu']; }, $trend_data['dhu
         <div class="loss-profit-container">
             <div class="loss-profit-card">
                 <div class="icon">📉</div>
-                <?php $loss_profit = round($total_pcs_display * 0.246, 0); ?>
-                <div class="amount <?php echo $loss_profit > 0 ? 'profit' : ''; ?>">LKR <?php echo number_format(abs($loss_profit)); ?></div>
-                <div class="label"><?php echo $loss_profit > 0 ? 'Profit' : 'Loss'; ?></div>
+                <?php $display_profit = round($total_profit); ?>
+                <div class="amount <?php echo $display_profit >= 0 ? 'profit' : ''; ?>">LKR <?php echo number_format(abs($display_profit)); ?></div>
+                <div class="label"><?php echo $display_profit >= 0 ? 'Profit' : 'Loss'; ?></div>
             </div>
             <div class="loss-profit-card"><div class="icon">📊</div><div class="amount" style="color:var(--primary);"><?php echo number_format($total_pcs_display); ?></div><div class="label">Total Production</div></div>
             <div class="loss-profit-card"><div class="icon">🎯</div><div class="amount" style="color:var(--amber);"><?php echo $avg_eff_display; ?>%</div><div class="label">Avg Efficiency</div></div>
