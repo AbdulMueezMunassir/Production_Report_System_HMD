@@ -253,12 +253,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="error-message">⚠️ <?php echo htmlspecialchars($error); ?></div>
             <?php endif; ?>
 
-            <form method="POST" action="" id="loginForm" autocomplete="off">
+            <form method="POST" action="" id="loginForm" autocomplete="off" name="loginForm">
+                <!-- Dummy fields to trick Chrome's password manager -->
+                <input type="text" name="fake_user" style="display:none" tabindex="-1" autocomplete="off">
+                <input type="password" name="fake_pass" style="display:none" tabindex="-1" autocomplete="off">
+
                 <div class="form-group">
                     <label for="username">Username</label>
                     <div class="input-wrapper">
                         <span class="input-icon">👤</span>
-                        <input type="text" id="username" name="username" placeholder="Enter your username" required autofocus value="admin">
+                        <input type="text" id="username" name="username" placeholder="Enter your username" required autofocus autocomplete="off" readonly onfocus="this.removeAttribute('readonly');">
                     </div>
                 </div>
 
@@ -266,7 +270,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <label for="password">Password</label>
                     <div class="input-wrapper">
                         <span class="input-icon">🔒</span>
-                        <input type="password" id="password" name="password" placeholder="Enter your password" required value="admin123">
+                        <input type="password" id="password" name="password" placeholder="Enter your password" required autocomplete="new-password" readonly onfocus="this.removeAttribute('readonly');">
                     </div>
                 </div>
 
@@ -274,8 +278,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <span class="btn-content">Sign In →</span>
                 </button>
             </form>
-
-            
 
             <div class="status-bar">
                 <span><span class="dot"></span> System Online</span>
