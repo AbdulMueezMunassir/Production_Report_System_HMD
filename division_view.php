@@ -192,6 +192,35 @@ foreach ($components as $comp) {
     $component_data[$comp_id] = $data;
 }
 
+// ============================================================
+// DHU MANUAL — Load saved values from DB (unit_id = 998)
+// hour_1..hour_7 store per-row DHU values for Assembly
+// hour_8 stores Lean Total DHU
+// ============================================================
+$dhu_saved = getReportData($conn, $division_id, 998, $date);
+$dhu_manual_value = (float)($dhu_saved['hour_1'] ?? 0);
+
+// Assembly row DHU map (row name → hour column)
+$assembly_dhu_map = [
+    'SHIRT'       => 1,
+    'SHIRT MTM'   => 2,
+    'TROUSER'     => 3,
+    'TROUSER MTM' => 4,
+    'COAT'        => 5,
+    'COAT MTM'    => 6,
+    'KNIT'        => 7,
+    'LEAN_TOTAL'  => 8,   // ← Lean Total DHU stored in hour_8
+];
+
+// Load all row DHU values
+$assembly_row_dhu = [];
+foreach ($assembly_dhu_map as $row_name => $hour_col) {
+    $assembly_row_dhu[$row_name] = (float)($dhu_saved["hour_$hour_col"] ?? 0);
+}
+
+// Lean Total DHU (hour_8)
+$lean_total_dhu_value = (float)($dhu_saved['hour_8'] ?? 0);
+
 // Calculate Match Out (aggregate from components) — but now editable
 $match_out = calculateMatchOutFixed($conn, $division_id, $date, $work_hours, $components);
 
@@ -646,13 +675,20 @@ if ($is_assembly_division) {
                         <td class="editable-yellow"><input type="number" step="0.1" class="epm-input" data-field="epm" value="<?php echo number_format($epm, 1); ?>"></td>
                         <td class="calculated profit-value" id="profit-<?php echo $comp['id']; ?>" style="font-weight:700; color:<?php echo $profit >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo round($profit); ?></td>
                     </tr>
-                    <?php if ($is_assembly_division): ?>
-                    <tr class="assembly-dhu-row" data-dhu-for="<?php echo $comp['id']; ?>">
+                    <?php if ($is_assembly_division): 
+                        $comp_row_name = strtoupper(trim($comp['name']));
+                        $comp_dhu_hour = $assembly_dhu_map[$comp_row_name] ?? 0;
+                        $comp_dhu_value = $assembly_row_dhu[$comp_row_name] ?? 0;
+                    ?>
+                    <tr class="assembly-dhu-row" data-dhu-for="<?php echo $comp['id']; ?>" data-dhu-row="<?php echo htmlspecialchars($comp_row_name); ?>" data-dhu-hour="<?php echo $comp_dhu_hour; ?>">
                         <td colspan="2" style="font-weight:700; color:var(--dhu-red);">DHU %</td>
                         <td colspan="<?php echo 9 + $work_hours + 1; ?>" style="color:var(--dhu-red); font-weight:700; text-align:center;">
-                            <?php 
-                            $dhu_val = ($day_total > 0) ? round((($day_total / 100) * 5), 1) : 0;
-                            echo number_format($dhu_val, 1); ?>%
+                            <input type="number" step="0.1" min="0" 
+                                   class="assembly-dhu-input" 
+                                   data-row-name="<?php echo htmlspecialchars($comp_row_name); ?>"
+                                   data-hour-col="<?php echo $comp_dhu_hour; ?>"
+                                   value="<?php echo number_format($comp_dhu_value, 1, '.', ''); ?>"
+                                   style="width:60px; text-align:center; font-weight:700; color:var(--dhu-red); background:rgba(255,235,59,0.4); border:1px solid rgba(220,53,69,0.3); border-radius:4px; padding:2px;">
                         </td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
@@ -707,12 +743,19 @@ if ($is_assembly_division) {
                         <td class="editable-yellow"><input type="number" step="0.1" class="style-epm-input" data-field="style_epm" value="<?php echo number_format($style_epm, 1); ?>"></td>
                         <td class="calculated profit-value" style="font-weight:700; color:<?php echo $profit >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo round($profit); ?></td>
                     </tr>
-                    <tr class="assembly-dhu-row">
+                    <?php 
+                    $knit_dhu_hour = $assembly_dhu_map['KNIT'] ?? 7;
+                    $knit_dhu_value = $assembly_row_dhu['KNIT'] ?? 0;
+                    ?>
+                    <tr class="assembly-dhu-row" data-dhu-row="KNIT" data-dhu-hour="<?php echo $knit_dhu_hour; ?>">
                         <td colspan="2" style="font-weight:700; color:var(--dhu-red);">DHU %</td>
                         <td colspan="<?php echo 9 + $work_hours + 1; ?>" style="color:var(--dhu-red); font-weight:700; text-align:center;">
-                            <?php 
-                            $dhu_val = ($day_total > 0) ? round(($day_total / 100) * 5, 1) : 0;
-                            echo number_format($dhu_val, 1); ?>%
+                            <input type="number" step="0.1" min="0" 
+                                   class="assembly-dhu-input" 
+                                   data-row-name="KNIT"
+                                   data-hour-col="<?php echo $knit_dhu_hour; ?>"
+                                   value="<?php echo number_format($knit_dhu_value, 1, '.', ''); ?>"
+                                   style="width:60px; text-align:center; font-weight:700; color:var(--dhu-red); background:rgba(255,235,59,0.4); border:1px solid rgba(220,53,69,0.3); border-radius:4px; padding:2px;">
                         </td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
@@ -778,20 +821,10 @@ if ($is_assembly_division) {
                         </td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
-                        <td style="color:var(--dhu-red); font-weight:700; font-size:14px;" id="dhu-value">
-                            <?php 
-                            $dhu_total = 0;
-                            $total_day = 0;
-                            foreach ($components as $comp) {
-                                if ($comp['is_match_out']) continue;
-                                $d = $component_data[$comp['id']] ?? [];
-                                if (($d['day_total'] ?? 0) > 0) {
-                                    $dhu_total += (($d['day_total'] / 100) * 5);
-                                    $total_day += $d['day_total'];
-                                }
-                            }
-                            $dhu_avg = ($total_day > 0) ? round(($dhu_total / $total_day) * 100, 1) : 0;
-                            echo number_format($dhu_avg, 1); ?>%
+                        <td style="color:var(--dhu-red); font-weight:700; font-size:14px;">
+                            <input type="number" step="0.1" min="0" id="dhu-manual-input" 
+                                   value="<?php echo number_format($dhu_manual_value, 1, '.', ''); ?>"
+                                   style="width:60px; text-align:center; font-weight:700; color:var(--dhu-red); background:rgba(255,235,59,0.4); border:1px solid rgba(220,53,69,0.3); border-radius:4px; padding:2px;">
                         </td>
                     </tr>
                     
@@ -966,18 +999,13 @@ if ($is_assembly_division) {
                         </td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
-                        <td style="color:var(--dhu-red); font-weight:700; font-size:14px;" id="lt-dhu-value">
-                            <?php 
-                            $dhu_day_total = 0;
-                            foreach ($components as $comp) {
-                                if ($comp['is_match_out']) continue;
-                                $d = $component_data[$comp['id']] ?? [];
-                                if (($d['day_total'] ?? 0) > 0) {
-                                    $dhu_day_total += (($d['day_total'] / 100) * 5);
-                                }
-                            }
-                            $lean_dhu = ($lean_total['day_total'] > 0) ? round(($dhu_day_total / $lean_total['day_total']) * 100, 1) : 0;
-                            echo number_format($lean_dhu, 1); ?>%
+                        <td style="color:var(--dhu-red); font-weight:700; font-size:14px;">
+                            <input type="number" step="0.1" min="0" 
+                                   class="assembly-dhu-input" 
+                                   data-row-name="LEAN_TOTAL"
+                                   data-hour-col="8"
+                                   value="<?php echo number_format($lean_total_dhu_value, 1, '.', ''); ?>"
+                                   style="width:60px; text-align:center; font-weight:700; color:var(--dhu-red); background:rgba(255,235,59,0.4); border:1px solid rgba(220,53,69,0.3); border-radius:4px; padding:2px;">
                         </td>
                     </tr>
                     
@@ -1365,15 +1393,83 @@ if ($is_assembly_division) {
         }
 
         function updateAssemblyDHU(compId, dayTotal) {
-            var dhuRow = $('tr[data-dhu-for="' + compId + '"]');
-            if (dhuRow.length > 0) {
-                var dhuVal = dayTotal > 0 ? round((dayTotal / 100) * 5, 1) : 0;
-                var tds = dhuRow.find('td');
-                if (tds.length > 2) {
-                    $(tds[2]).text(dhuVal.toFixed(1) + '%');
-                }
-            }
+            // DO NOT auto-update the DHU% — it's now user-entered
+            // Only recalculate DHU for display if needed
+            return;
         }
+
+        // ============================================================
+        // ASSEMBLY ROW DHU — Save each row's DHU to unit_id=998, hour_N
+        // Also supports LEAN_TOTAL (hour_8)
+        // ============================================================
+        $(document).on('change', '.assembly-dhu-input', function() {
+            var hourCol = parseInt($(this).data('hour-col'));
+            if (!hourCol || hourCol < 1 || hourCol > 8) return;  // ← allow hour_8
+            
+            var dhuVal = parseFloat($(this).val()) || 0;
+            var hours = parseInt($('#workHours').val()) || 10;
+            
+            // Build complete DHU record (all 8 rows) — need to preserve others
+            var data = { ttl_sam_pc: 0, unit_smv: 0, unit_carder: 0, plan_hours: 0, worked_hours: hours, epm: 13.2, profit: 0 };
+            
+            // Read current values from all assembly-dhu-inputs on the page
+            for (var i = 1; i <= 11; i++) data['hour_' + i] = 0;
+            $('.assembly-dhu-input').each(function() {
+                var hc = parseInt($(this).data('hour-col'));
+                if (hc >= 1 && hc <= 11) {
+                    data['hour_' + hc] = parseFloat($(this).val()) || 0;
+                }
+            });
+            
+            $.ajax({
+                url: 'save_data.php',
+                type: 'POST',
+                data: {
+                    action: 'auto_save',
+                    date: $('#reportDate').val(),
+                    division: 7,  // Assembly division
+                    component: 998,
+                    data: JSON.stringify(data),
+                    work_hours: hours,
+                    is_assembly: '1'
+                },
+                dataType: 'json'
+            });
+        });
+
+        // ============================================================
+        // DHU MANUAL INPUT — Save on change
+        // ============================================================
+        $(document).on('change', '#dhu-manual-input', function() {
+            var dhuVal = parseFloat($(this).val()) || 0;
+            var hours = parseInt($('#workHours').val()) || 10;
+            var data = { 
+                ttl_sam_pc: 0, 
+                unit_smv: 0, 
+                unit_carder: 0, 
+                plan_hours: 0, 
+                worked_hours: hours, 
+                epm: 13.2, 
+                profit: 0 
+            };
+            data['hour_1'] = dhuVal;
+            for (var h = 2; h <= 11; h++) data['hour_' + h] = 0;
+            
+            $.ajax({
+                url: 'save_data.php',
+                type: 'POST',
+                data: {
+                    action: 'auto_save',
+                    date: $('#reportDate').val(),
+                    division: <?php echo $division_id; ?>,
+                    component: 998,
+                    data: JSON.stringify(data),
+                    work_hours: hours,
+                    is_assembly: '<?php echo $is_assembly_division ? "1" : "0"; ?>'
+                },
+                dataType: 'json'
+            });
+        });
 
         $(document).on('change input', '.epm-input, .style-epm-input', function() {
             var row = $(this).closest('tr');
@@ -1642,22 +1738,6 @@ if ($is_assembly_division) {
             var ltProfit = (500 * data.day_total) - (7365 * (data.assemble_carder + SHIRT_MATCH_OUT_CARDER));
             row.find('#lt-profit').text(rnd(ltProfit));
             row.find('#lt-profit').css('color', ltProfit >= 0 ? '#28a745' : '#dc3545');
-            
-            var dhuDayTotal = 0;
-            $('.excel-table tbody tr').each(function() {
-                if (!$(this).hasClass('match-out-row') && !$(this).hasClass('lean-total-row') && 
-                    !$(this).hasClass('grand-total-row') && !$(this).hasClass('total-row') && 
-                    !$(this).hasClass('dhu-row') && !$(this).hasClass('assembly-dhu-row') &&
-                    !$(this).hasClass('section-divider') &&
-                    $(this).data('isassembly') == '1') {
-                    var dayTotal = parseFloat($(this).find('.day-total').text()) || 0;
-                    if (dayTotal > 0) {
-                        dhuDayTotal += (dayTotal / 100) * 5;
-                    }
-                }
-            });
-            var leanDhu = data.day_total > 0 ? round((dhuDayTotal / data.day_total) * 100, 1) : 0;
-            $('#lt-dhu-value').text(leanDhu.toFixed(1) + '%');
         }
 
         function updateGrandTotalRow(data, hours) {

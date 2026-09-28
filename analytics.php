@@ -1,5 +1,9 @@
 <?php
-// analytics_kiosk.php - Kiosk Mode Analytics (Continuous scroll, stacked screens)
+// analytics.php - Kiosk Mode Analytics (Continuous scroll, stacked screens)
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/functions.php';
@@ -8,10 +12,6 @@ requireLogin();
 
 $conn = getDB();
 $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
-
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
 
 $selected_date = date('Y-m-d');
 $selected_division = isset($_GET['division']) ? (int)$_GET['division'] : 1;
@@ -59,6 +59,32 @@ try {
     $mo2 = calculateMatchOutFixed($conn, 2, $selected_date, $work_hours, $trouser_components);
     $trouser_match_out_carder = (int)($mo2['unit_carder'] ?? 0);
 } catch (Exception $e) {}
+
+// ============================================================
+// DHU MANUAL VALUES — Load from DB (unit_id = 998)
+// ============================================================
+$dhu_saved = getReportData($conn, $selected_division, 998, $selected_date);
+$dhu_manual_value = (float)($dhu_saved['hour_1'] ?? 0);
+
+// Assembly row DHU map
+$assembly_dhu_map = [
+    'SHIRT'       => 1,
+    'SHIRT MTM'   => 2,
+    'TROUSER'     => 3,
+    'TROUSER MTM' => 4,
+    'COAT'        => 5,
+    'COAT MTM'    => 6,
+    'KNIT'        => 7,
+];
+
+// Per-row DHU for Assembly
+$assembly_row_dhu = [];
+foreach ($assembly_dhu_map as $row_name => $hour_col) {
+    $assembly_row_dhu[$row_name] = (float)($dhu_saved["hour_$hour_col"] ?? 0);
+}
+
+// Lean Total DHU
+$lean_total_dhu_value = (float)($dhu_saved['hour_8'] ?? 0);
 
 // HELPERS
 function computeProfit($data, $division_type, $comp_name = '', $total_assemble_carder = null) {
@@ -109,7 +135,7 @@ function computeDHU($data) {
     return $dt > 0 ? round(($dt / 100) * 5, 1) : 0;
 }
 
-function buildColumn($name, $data, $division_type, $total_assemble_carder = null, $work_hours = 10) {
+function buildColumn($name, $data, $division_type, $total_assemble_carder = null, $work_hours = 10, $dhu_override = null) {
     $hours = [];
     for ($h = 1; $h <= $work_hours; $h++) $hours[] = (float)($data["hour_$h"] ?? 0);
     $unit_carder = (int)($data['unit_carder'] ?? 0);
@@ -135,9 +161,10 @@ function buildColumn($name, $data, $division_type, $total_assemble_carder = null
         if ($available_minutes > 0 && $plan_hours > 0) $denom = ($available_minutes / $plan_hours) * $worked_hours;
         $acvd_eff = $denom > 0 ? ($ern_minutes / $denom) : 0;
     }
+    $dhu_val = ($dhu_override !== null) ? $dhu_override : computeDHU($data);
     return [
         'name' => $name, 'pcs' => $day_total, 'eff' => $acvd_eff * 100,
-        'carder' => $unit_carder, 'dhu' => computeDHU($data),
+        'carder' => $unit_carder, 'dhu' => $dhu_val,
         'hours' => $hours, 'profit' => computeProfit($data, $division_type, $name, $total_assemble_carder),
         'type' => ($division_type === 'assembly') ? 'assembly' : 'component'
     ];
@@ -155,48 +182,48 @@ $assembly_main = [];
 
 foreach (['Front', 'Back', 'Collar', 'Sleeve', 'Cuff'] as $name) {
     $cd = getComponentByName($conn, 1, $selected_date, $name);
-    $shirt_main[] = $cd ? buildColumn($name, $cd, 'shirt', null, $work_hours) : emptyColumn($name, 'component', $work_hours);
+    $shirt_main[] = $cd ? buildColumn($name, $cd, 'shirt', null, $work_hours, $dhu_manual_value) : emptyColumn($name, 'component', $work_hours);
 }
 $mo_shirt = getMatchOutData($conn, 1, $selected_date);
-$mo_col = buildColumn('Match Out', $mo_shirt, 'shirt', null, $work_hours);
+$mo_col = buildColumn('Match Out', $mo_shirt, 'shirt', null, $work_hours, $dhu_manual_value);
 $mo_col['type'] = 'match_out'; $mo_col['profit'] = 0;
 foreach ($shirt_main as $c) if ($c['type']==='component') $mo_col['profit'] += $c['profit'];
 $shirt_main[] = $mo_col;
 $asm_shirt = getComponentByName($conn, 7, $selected_date, 'SHIRT');
 if ($asm_shirt) {
     $tac = ((int)($asm_shirt['unit_carder'] ?? 0)) + $shirt_match_out_carder;
-    $c = buildColumn('Assembly SHIRT', $asm_shirt, 'assembly', $tac, $work_hours);
+    $c = buildColumn('Assembly SHIRT', $asm_shirt, 'assembly', $tac, $work_hours, $assembly_row_dhu['SHIRT'] ?? 0);
     $c['type'] = 'assembly'; $shirt_main[] = $c;
 } else $shirt_main[] = emptyColumn('Assembly SHIRT', 'assembly', $work_hours);
 
 $shirt_mtm_comp = getComponentByName($conn, 7, $selected_date, 'SHIRT MTM');
-if ($shirt_mtm_comp) { $c = buildColumn('SHIRT MTM', $shirt_mtm_comp, 'assembly', null, $work_hours); $c['type']='assembly'; $shirt_mtm[] = $c; }
+if ($shirt_mtm_comp) { $c = buildColumn('SHIRT MTM', $shirt_mtm_comp, 'assembly', null, $work_hours, $assembly_row_dhu['SHIRT MTM'] ?? 0); $c['type']='assembly'; $shirt_mtm[] = $c; }
 else $shirt_mtm[] = emptyColumn('SHIRT MTM', 'assembly', $work_hours);
 
 foreach (['Front', 'Back', 'Band'] as $name) {
     $cd = getComponentByName($conn, 2, $selected_date, $name);
-    $trouser_main[] = $cd ? buildColumn($name, $cd, 'trouser', null, $work_hours) : emptyColumn($name, 'component', $work_hours);
+    $trouser_main[] = $cd ? buildColumn($name, $cd, 'trouser', null, $work_hours, $dhu_manual_value) : emptyColumn($name, 'component', $work_hours);
 }
 $mo_tr = getMatchOutData($conn, 2, $selected_date);
-$mo_tr_col = buildColumn('Match Out', $mo_tr, 'trouser', null, $work_hours);
+$mo_tr_col = buildColumn('Match Out', $mo_tr, 'trouser', null, $work_hours, $dhu_manual_value);
 $mo_tr_col['type'] = 'match_out'; $mo_tr_col['profit'] = 0;
 foreach ($trouser_main as $c) if ($c['type']==='component') $mo_tr_col['profit'] += $c['profit'];
 $trouser_main[] = $mo_tr_col;
 $asm_tr = getComponentByName($conn, 7, $selected_date, 'TROUSER');
 if ($asm_tr) {
     $tac = ((int)($asm_tr['unit_carder'] ?? 0)) + $trouser_match_out_carder;
-    $c = buildColumn('Assembly TROUSER', $asm_tr, 'assembly', $tac, $work_hours);
+    $c = buildColumn('Assembly TROUSER', $asm_tr, 'assembly', $tac, $work_hours, $assembly_row_dhu['TROUSER'] ?? 0);
     $c['type'] = 'assembly'; $trouser_main[] = $c;
 } else $trouser_main[] = emptyColumn('Assembly TROUSER', 'assembly', $work_hours);
 
 $trouser_mtm_comp = getComponentByName($conn, 7, $selected_date, 'TROUSER MTM');
-if ($trouser_mtm_comp) { $c = buildColumn('TROUSER MTM', $trouser_mtm_comp, 'assembly', null, $work_hours); $c['type']='assembly'; $trouser_mtm[] = $c; }
+if ($trouser_mtm_comp) { $c = buildColumn('TROUSER MTM', $trouser_mtm_comp, 'assembly', null, $work_hours, $assembly_row_dhu['TROUSER MTM'] ?? 0); $c['type']='assembly'; $trouser_mtm[] = $c; }
 else $trouser_mtm[] = emptyColumn('TROUSER MTM', 'assembly', $work_hours);
 
 $coat_comp = getComponentByName($conn, 7, $selected_date, 'COAT');
-$coat_main[] = $coat_comp ? buildColumn('COAT', $coat_comp, 'assembly', null, $work_hours) : emptyColumn('COAT', 'assembly', $work_hours);
+$coat_main[] = $coat_comp ? buildColumn('COAT', $coat_comp, 'assembly', null, $work_hours, $assembly_row_dhu['COAT'] ?? 0) : emptyColumn('COAT', 'assembly', $work_hours);
 $coat_mtm_comp = getComponentByName($conn, 7, $selected_date, 'COAT MTM');
-$coat_mtm[] = $coat_mtm_comp ? buildColumn('COAT MTM', $coat_mtm_comp, 'assembly', null, $work_hours) : emptyColumn('COAT MTM', 'assembly', $work_hours);
+$coat_mtm[] = $coat_mtm_comp ? buildColumn('COAT MTM', $coat_mtm_comp, 'assembly', null, $work_hours, $assembly_row_dhu['COAT MTM'] ?? 0) : emptyColumn('COAT MTM', 'assembly', $work_hours);
 
 foreach (['SHIRT', 'SHIRT MTM', 'TROUSER', 'TROUSER MTM', 'COAT', 'COAT MTM', 'KNIT'] as $name) {
     $cd = getComponentByName($conn, 7, $selected_date, $name);
@@ -204,7 +231,8 @@ foreach (['SHIRT', 'SHIRT MTM', 'TROUSER', 'TROUSER MTM', 'COAT', 'COAT MTM', 'K
         $tac = (int)($cd['unit_carder'] ?? 0);
         if ($name === 'SHIRT') $tac += $shirt_match_out_carder;
         elseif ($name === 'TROUSER') $tac += $trouser_match_out_carder;
-        $assembly_main[] = buildColumn($name, $cd, 'assembly', $tac, $work_hours);
+        $row_dhu = $assembly_row_dhu[$name] ?? 0;
+        $assembly_main[] = buildColumn($name, $cd, 'assembly', $tac, $work_hours, $row_dhu);
     } else $assembly_main[] = emptyColumn($name, 'component', $work_hours);
 }
 
@@ -255,6 +283,15 @@ $stats_trouser_mtm = computeStats($trouser_mtm);
 $stats_coat_main = computeStats($coat_main);
 $stats_coat_mtm = computeStats($coat_mtm);
 $stats_assembly = computeStats($assembly_main);
+
+// ✅ Pre-compute assembly charts ONCE for reuse in the table loop
+$assembly_charts = computeCharts($assembly_main, $work_hours);
+
+// KNIT — compute once, reuse in HTML and JS
+$knit_data = getComponentByName($conn, 7, $selected_date, 'KNIT');
+$knit_col = $knit_data ? buildColumn('KNIT', $knit_data, 'assembly', null, $work_hours, $assembly_row_dhu['KNIT'] ?? 0) : emptyColumn('KNIT', 'assembly', $work_hours);
+$knit_charts = computeCharts([$knit_col], $work_hours);
+$knit_stats = computeStats([$knit_col]);
 
 $display_date = date('M d, Y');
 $chart_labels = range(1, $work_hours);
@@ -451,7 +488,7 @@ $chart_labels = range(1, $work_hours);
                         <td><?php echo number_format($pcs, 0); ?></td>
                         <td class="<?php echo $ec; ?>"><?php echo number_format($eff, 1); ?>%</td>
                         <?php endforeach; ?>
-                        <td><?php echo number_format($charts_shirt_main['dhu'][$h - 1] ?? 0, 1); ?>%</td>
+                        <td><?php echo number_format($dhu_manual_value, 1); ?>%</td>
                     </tr>
                     <?php endfor; ?>
                     <tr class="total-row"><td style="font-weight:700;">Average</td>
@@ -518,7 +555,7 @@ $chart_labels = range(1, $work_hours);
                         <td><?php echo number_format($pcs, 0); ?></td>
                         <td class="<?php echo $ec; ?>"><?php echo number_format($eff, 1); ?>%</td>
                         <?php endforeach; ?>
-                        <td><?php echo number_format($charts_shirt_mtm['dhu'][$h - 1] ?? 0, 1); ?>%</td>
+                        <td><?php echo number_format($assembly_row_dhu['SHIRT MTM'] ?? 0, 1); ?>%</td>
                     </tr>
                     <?php endfor; ?>
                     <tr class="total-row"><td style="font-weight:700;">Average</td>
@@ -605,7 +642,7 @@ $chart_labels = range(1, $work_hours);
                         <td><?php echo number_format($pcs, 0); ?></td>
                         <td class="<?php echo $ec; ?>"><?php echo number_format($eff, 1); ?>%</td>
                         <?php endforeach; ?>
-                        <td><?php echo number_format($charts_trouser_main['dhu'][$h - 1] ?? 0, 1); ?>%</td>
+                        <td><?php echo number_format($dhu_manual_value, 1); ?>%</td>
                     </tr>
                     <?php endfor; ?>
                     <tr class="total-row"><td style="font-weight:700;">Average</td>
@@ -669,7 +706,7 @@ $chart_labels = range(1, $work_hours);
                         <td><?php echo number_format($pcs, 0); ?></td>
                         <td class="<?php echo $ec; ?>"><?php echo number_format($eff, 1); ?>%</td>
                         <?php endforeach; ?>
-                        <td><?php echo number_format($charts_trouser_mtm['dhu'][$h - 1] ?? 0, 1); ?>%</td>
+                        <td><?php echo number_format($assembly_row_dhu['TROUSER MTM'] ?? 0, 1); ?>%</td>
                     </tr>
                     <?php endfor; ?>
                     <tr class="total-row"><td style="font-weight:700;">Average</td>
@@ -749,7 +786,7 @@ $chart_labels = range(1, $work_hours);
                         <td><?php echo number_format($pcs, 0); ?></td>
                         <td class="<?php echo $ec; ?>"><?php echo number_format($eff, 1); ?>%</td>
                         <?php endforeach; ?>
-                        <td><?php echo number_format($charts_coat_main['dhu'][$h - 1] ?? 0, 1); ?>%</td>
+                        <td><?php echo number_format($assembly_row_dhu['COAT'] ?? 0, 1); ?>%</td>
                     </tr>
                     <?php endfor; ?>
                     <tr class="total-row"><td style="font-weight:700;">Average</td>
@@ -816,7 +853,7 @@ $chart_labels = range(1, $work_hours);
                         <td><?php echo number_format($pcs, 0); ?></td>
                         <td class="<?php echo $ec; ?>"><?php echo number_format($eff, 1); ?>%</td>
                         <?php endforeach; ?>
-                        <td><?php echo number_format($charts_coat_mtm['dhu'][$h - 1] ?? 0, 1); ?>%</td>
+                        <td><?php echo number_format($assembly_row_dhu['COAT MTM'] ?? 0, 1); ?>%</td>
                     </tr>
                     <?php endfor; ?>
                     <tr class="total-row"><td style="font-weight:700;">Average</td>
@@ -845,12 +882,6 @@ $chart_labels = range(1, $work_hours);
         <!-- ============================================================ -->
         <!-- SCREEN 3: KNIT -->
         <!-- ============================================================ -->
-        <?php 
-        $knit_data = getComponentByName($conn, 7, $selected_date, 'KNIT');
-        $knit_col = $knit_data ? buildColumn('KNIT', $knit_data, 'assembly', null, $work_hours) : emptyColumn('KNIT', 'assembly', $work_hours);
-        $knit_charts = computeCharts([$knit_col], $work_hours);
-        $knit_stats = computeStats([$knit_col]);
-        ?>
         <div class="screen-section" id="screen-knit">
             <div class="screen-title">🧶 KNIT</div>
             
@@ -885,7 +916,7 @@ $chart_labels = range(1, $work_hours);
                     <tr><td style="font-weight:700;"><?php echo $h; ?></td>
                         <td><?php echo number_format($pcs, 0); ?></td>
                         <td class="<?php echo $ec; ?>"><?php echo number_format($eff, 1); ?>%</td>
-                        <td><?php echo number_format($knit_charts['dhu'][$h - 1] ?? 0, 1); ?>%</td>
+                        <td><?php echo number_format($assembly_row_dhu['KNIT'] ?? 0, 1); ?>%</td>
                     </tr>
                     <?php endfor; ?>
                     <tr class="total-row"><td style="font-weight:700;">Average</td>
@@ -944,7 +975,7 @@ $chart_labels = range(1, $work_hours);
                         <td><?php echo number_format($pcs, 0); ?></td>
                         <td class="<?php echo $ec; ?>"><?php echo number_format($eff, 1); ?>%</td>
                         <?php endforeach; ?>
-                        <td><?php echo number_format(computeCharts($assembly_main, $work_hours)['dhu'][$h - 1] ?? 0, 1); ?>%</td>
+                        <td><?php echo number_format($assembly_row_dhu[$col['name']] ?? 0, 1); ?>%</td>
                     </tr>
                     <?php endfor; ?>
                     <tr class="total-row"><td style="font-weight:700;">Average</td>
@@ -983,7 +1014,7 @@ $chart_labels = range(1, $work_hours);
         updateClock();
         setInterval(updateClock, 1000);
 
-                function switchDivision(id) {
+        function switchDivision(id) {
             window.location.href = 'analytics.php?division=' + id;
         }
 
@@ -996,8 +1027,6 @@ $chart_labels = range(1, $work_hours);
         const trouserMainDHU = <?php echo json_encode($charts_trouser_main['dhu']); ?>;
         const trouserMtmProd = <?php echo json_encode($charts_trouser_mtm['production']); ?>;
         const trouserMtmDHU = <?php echo json_encode($charts_trouser_mtm['dhu']); ?>;
-        const coatMainProd = <?php echo json_encode($coat_main[0]['hours'] ?? array_fill(0, $work_hours, 0)); ?>;
-        const coatMtmProd = <?php echo json_encode($coat_mtm[0]['hours'] ?? array_fill(0, $work_hours, 0)); ?>;
 
         Chart.defaults.font.family = "'Inter', sans-serif";
         Chart.defaults.font.size = 11;
@@ -1067,20 +1096,14 @@ $chart_labels = range(1, $work_hours);
         mkCompareDHU('cmp-trouser-dhu', trouserMainDHU, trouserMtmDHU);
         mkCompareProd('cmp-trouser-trend-prod', trouserMainProd, trouserMtmProd);
         mkCompareDHU('cmp-trouser-trend-dhu', trouserMainDHU, trouserMtmDHU);
-        <?php elseif ($selected_division == 3): 
-            $knit_js_data = getComponentByName($conn, 7, $selected_date, 'KNIT');
-            $knit_js_col = $knit_js_data ? buildColumn('KNIT', $knit_js_data, 'assembly', null, $work_hours) : emptyColumn('KNIT', 'assembly', $work_hours);
-            $knit_js_charts = computeCharts([$knit_js_col], $work_hours);
-        ?>
+        <?php elseif ($selected_division == 3): ?>
         mkProdChart('c1-coat-main', <?php echo json_encode($charts_coat_main['production']); ?>, <?php echo json_encode($charts_coat_main['dhu']); ?>, 'Pcs', 'Eff %');
         mkDHUChart('c2-coat-main', <?php echo json_encode($charts_coat_main['dhu']); ?>);
         mkProdChart('c1-coat-mtm', <?php echo json_encode($charts_coat_mtm['production']); ?>, <?php echo json_encode($charts_coat_mtm['dhu']); ?>, 'Pcs', 'Eff %');
         mkDHUChart('c2-coat-mtm', <?php echo json_encode($charts_coat_mtm['dhu']); ?>);
-        mkProdChart('c1-knit', <?php echo json_encode($knit_js_charts['production']); ?>, <?php echo json_encode($knit_js_charts['dhu']); ?>, 'Pcs', 'Eff %');
-        mkDHUChart('c2-knit', <?php echo json_encode($knit_js_charts['dhu']); ?>);
-        <?php elseif ($selected_division == 7): 
-            $assembly_charts = computeCharts($assembly_main, $work_hours);
-        ?>
+        mkProdChart('c1-knit', <?php echo json_encode($knit_charts['production']); ?>, <?php echo json_encode($knit_charts['dhu']); ?>, 'Pcs', 'Eff %');
+        mkDHUChart('c2-knit', <?php echo json_encode($knit_charts['dhu']); ?>);
+        <?php elseif ($selected_division == 7): ?>
         mkProdChart('c1-assembly', <?php echo json_encode($assembly_charts['production']); ?>, <?php echo json_encode($assembly_charts['dhu']); ?>, 'Pcs', 'Eff %');
         mkDHUChart('c2-assembly', <?php echo json_encode($assembly_charts['dhu']); ?>);
         <?php endif; ?>
@@ -1088,7 +1111,7 @@ $chart_labels = range(1, $work_hours);
         // ============================================================
         // CONTINUOUS SCROLL (infinite, top → bottom → top)
         // ============================================================
-                <?php if (in_array($selected_division, [1, 2, 3, 7])): ?>
+        <?php if (in_array($selected_division, [1, 2, 3, 7])): ?>
         (function() {
             // ============================================================
             // SCROLL SETTINGS — Adjust these to change speed
