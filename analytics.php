@@ -841,6 +841,70 @@ $chart_labels = range(1, $work_hours);
                 <div class="chart-card"><h4>📉 D.H.U - HOURLY</h4><div class="chart-wrapper"><canvas id="c2-coat-mtm"></canvas></div></div>
             </div>
         </div>
+        
+        <!-- ============================================================ -->
+        <!-- SCREEN 3: KNIT -->
+        <!-- ============================================================ -->
+        <?php 
+        $knit_data = getComponentByName($conn, 7, $selected_date, 'KNIT');
+        $knit_col = $knit_data ? buildColumn('KNIT', $knit_data, 'assembly', null, $work_hours) : emptyColumn('KNIT', 'assembly', $work_hours);
+        $knit_charts = computeCharts([$knit_col], $work_hours);
+        $knit_stats = computeStats([$knit_col]);
+        ?>
+        <div class="screen-section" id="screen-knit">
+            <div class="screen-title">🧶 KNIT</div>
+            
+            <div class="stats-row">
+                <div class="stat-card"><div class="number"><?php echo number_format($knit_stats['total_pcs']); ?></div><div class="label">Total Production</div></div>
+                <div class="stat-card"><div class="number eff"><?php echo $knit_stats['avg_eff']; ?>%</div><div class="label">Avg Efficiency</div></div>
+                <div class="stat-card"><div class="number dhu"><?php echo $knit_stats['avg_dhu']; ?>%</div><div class="label">Avg DHU</div></div>
+                <div class="stat-card"><div class="number"><?php echo $work_hours; ?></div><div class="label">Work Hours</div></div>
+            </div>
+            
+            <table class="dashboard-table">
+                <thead>
+                    <tr>
+                        <th rowspan="2" style="min-width:100px;">DASH BOARD</th>
+                        <th colspan="2" class="assembly-col">KNIT</th>
+                        <th rowspan="2" class="dhu-col">DHU %</th>
+                    </tr>
+                    <tr><th>Pcs</th><th>Eff</th></tr>
+                </thead>
+                <tbody>
+                    <tr class="header-row"><td style="text-align:left;">DIRECTS-BUDGET</td>
+                        <td colspan="2"><?php echo $knit_col['carder']; ?></td><td>—</td></tr>
+                    <tr class="header-row"><td style="text-align:left;">DIRECTS-PRESENT</td>
+                        <td colspan="2"><?php echo $knit_col['carder']; ?></td><td>—</td></tr>
+                    <tr class="header-row"><td style="text-align:left;">ABSENTEESM</td>
+                        <td colspan="2">0%</td><td>—</td></tr>
+                    <?php for ($h = 1; $h <= $work_hours; $h++): 
+                        $pcs = $knit_col['hours'][$h - 1] ?? 0;
+                        $eff = $knit_col['eff'];
+                        $ec = $eff >= 90 ? 'eff-good' : ($eff >= 70 ? 'eff-avg' : 'eff-bad');
+                    ?>
+                    <tr><td style="font-weight:700;"><?php echo $h; ?></td>
+                        <td><?php echo number_format($pcs, 0); ?></td>
+                        <td class="<?php echo $ec; ?>"><?php echo number_format($eff, 1); ?>%</td>
+                        <td><?php echo number_format($knit_charts['dhu'][$h - 1] ?? 0, 1); ?>%</td>
+                    </tr>
+                    <?php endfor; ?>
+                    <tr class="total-row"><td style="font-weight:700;">Average</td>
+                        <td style="font-weight:700;"><?php echo number_format($knit_col['pcs'], 0); ?></td>
+                        <td style="font-weight:700;"><?php echo number_format($knit_col['eff'], 1); ?>%</td>
+                        <td style="font-weight:700;color:var(--dhu-color);"><?php echo $knit_stats['avg_dhu']; ?>%</td>
+                    </tr>
+                    <tr class="loss-row"><td style="font-weight:700;">PROFIT</td>
+                        <?php $kp = round($knit_col['profit']); ?>
+                        <td colspan="2" style="font-weight:700; color:<?php echo $kp >= 0 ? '#28a745' : '#dc3545'; ?>;">LKR <?php echo number_format($kp); ?></td>
+                        <td>—</td></tr>
+                </tbody>
+            </table>
+            
+            <div class="chart-grid">
+                <div class="chart-card"><h4>📈 PRODUCTION - HOURLY</h4><div class="chart-wrapper"><canvas id="c1-knit"></canvas></div></div>
+                <div class="chart-card"><h4>📉 D.H.U - HOURLY</h4><div class="chart-wrapper"><canvas id="c2-knit"></canvas></div></div>
+            </div>
+        </div>
         <?php endif; ?>
 
         <?php if ($selected_division == 7): ?>
@@ -1003,11 +1067,17 @@ $chart_labels = range(1, $work_hours);
         mkCompareDHU('cmp-trouser-dhu', trouserMainDHU, trouserMtmDHU);
         mkCompareProd('cmp-trouser-trend-prod', trouserMainProd, trouserMtmProd);
         mkCompareDHU('cmp-trouser-trend-dhu', trouserMainDHU, trouserMtmDHU);
-        <?php elseif ($selected_division == 3): ?>
+        <?php elseif ($selected_division == 3): 
+            $knit_js_data = getComponentByName($conn, 7, $selected_date, 'KNIT');
+            $knit_js_col = $knit_js_data ? buildColumn('KNIT', $knit_js_data, 'assembly', null, $work_hours) : emptyColumn('KNIT', 'assembly', $work_hours);
+            $knit_js_charts = computeCharts([$knit_js_col], $work_hours);
+        ?>
         mkProdChart('c1-coat-main', <?php echo json_encode($charts_coat_main['production']); ?>, <?php echo json_encode($charts_coat_main['dhu']); ?>, 'Pcs', 'Eff %');
         mkDHUChart('c2-coat-main', <?php echo json_encode($charts_coat_main['dhu']); ?>);
         mkProdChart('c1-coat-mtm', <?php echo json_encode($charts_coat_mtm['production']); ?>, <?php echo json_encode($charts_coat_mtm['dhu']); ?>, 'Pcs', 'Eff %');
         mkDHUChart('c2-coat-mtm', <?php echo json_encode($charts_coat_mtm['dhu']); ?>);
+        mkProdChart('c1-knit', <?php echo json_encode($knit_js_charts['production']); ?>, <?php echo json_encode($knit_js_charts['dhu']); ?>, 'Pcs', 'Eff %');
+        mkDHUChart('c2-knit', <?php echo json_encode($knit_js_charts['dhu']); ?>);
         <?php elseif ($selected_division == 7): 
             $assembly_charts = computeCharts($assembly_main, $work_hours);
         ?>

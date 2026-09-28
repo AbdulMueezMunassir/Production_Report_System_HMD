@@ -588,8 +588,9 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         <nav class="topnav">
             <a href="dashboard.php">Dashboard</a>
             <a href="reports.php" class="active">Reports</a>
-            <?php if (isAdmin()): ?>
             <a href="analytics.php">Analytics</a>
+            <?php if (isAdmin()): ?>
+            
             <a href="users.php">Users</a>
             <?php endif; ?>
         </nav>
@@ -641,6 +642,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                 <button type="submit" class="btn-apply">Apply</button>
                 <button type="button" class="btn-outline" onclick="viewAllRecords()">View All</button>
                 <button type="button" class="btn-outline" onclick="viewToday()">Today</button>
+                
             </div>
         </form>
 
@@ -779,6 +781,13 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             document.getElementById('rep-to').value = today;
             document.getElementById('rep-division').value = 'all';
             document.querySelector('.filter-row').submit();
+        }
+
+        function downloadCSV() {
+            var from = document.getElementById('rep-from').value;
+            var to = document.getElementById('rep-to').value;
+            var division = document.getElementById('rep-division').value;
+            window.location.href = 'export_reports_csv.php?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to) + '&division=' + encodeURIComponent(division);
         }
 
         document.addEventListener('keydown', function(e) {

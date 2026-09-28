@@ -934,6 +934,9 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             <button class="back-button" onclick="window.print()" style="cursor:pointer;">
                 🖨️ Print Report
             </button>
+            <button class="back-button" onclick="downloadReportCSV()" style="cursor:pointer; background: rgba(33,115,70,0.15); border-color: rgba(33,115,70,0.3);">
+                📥 Download CSV
+            </button>
         </div>
     </div>
 
@@ -948,6 +951,13 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         }
         updateClock();
         setInterval(updateClock, 60000);
+        
+        function downloadReportCSV() {
+            var date = '<?php echo $date; ?>';
+            var division = '<?php echo $division_id; ?>';
+            var hours = '<?php echo $work_hours; ?>';
+            window.location.href = 'export_view_report_csv.php?date=' + encodeURIComponent(date) + '&division=' + encodeURIComponent(division) + '&hours=' + encodeURIComponent(hours);
+        }
     </script>
 </body>
 </html>
