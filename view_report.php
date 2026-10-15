@@ -9,7 +9,7 @@ requireLogin();
 $conn = getDB();
 
 // Get parameters from URL
-$date = isset($_GET['date']) ? $_GET['date'] : date('Y-m-d');
+$date = normalizeReportDate($_GET['date'] ?? null);
 $division_id = isset($_GET['division']) ? (int)$_GET['division'] : 0;
 
 // Get filter parameters for back button
@@ -25,7 +25,7 @@ if ($division_id == 0 && isset($_GET['id'])) {
     $report = $stmt->fetch(PDO::FETCH_ASSOC);
     if ($report) {
         $division_id = $report['devition_id'];
-        $date = $report['report_date'];
+        $date = normalizeReportDate($report['report_date']);
     }
 }
 
@@ -47,8 +47,26 @@ if ($is_assembly_division) {
     $division_name = 'Assembly';
 }
 
-$work_hours = isset($_GET['hours']) ? (int)$_GET['hours'] : 10;
+// Auto-detect working hours (after $conn + $division_id are ready)
+$work_hours = isset($_GET['hours']) ? (int)$_GET['hours'] : detectWorkHours($conn, $division_id, $date, 10);
 $work_hours = max(1, min(11, $work_hours));
+
+// ============================================================
+// FIX 1: Deduplicate components helper
+// ============================================================
+if (!function_exists('dedupeComponentRows')) {
+    function dedupeComponentRows($list) {
+        $seen = [];
+        $out = [];
+        foreach ((array)$list as $c) {
+            $key = (!empty($c['is_match_out']) ? 'MO:' : 'C:') . strtoupper(trim($c['name']));
+            if (isset($seen[$key])) continue;
+            $seen[$key] = true;
+            $out[] = $c;
+        }
+        return $out;
+    }
+}
 
 // ============================================================
 // MATCH OUT DATA FOR ASSEMBLY
@@ -62,7 +80,7 @@ $trouser_match_out_smv = 0;
 
 if ($is_assembly_division) {
     try {
-        $shirt_components = getComponents($conn, 1);
+        $shirt_components = dedupeComponentRows(getComponents($conn, 1));
         $shirt_match_out = calculateMatchOutFixed($conn, 1, $date, $work_hours, $shirt_components);
         $shirt_match_out_carder = (int)($shirt_match_out['unit_carder'] ?? 0);
         $shirt_match_out_smv = (float)($shirt_match_out['unit_smv'] ?? 0);
@@ -70,7 +88,7 @@ if ($is_assembly_division) {
         $shirt_match_out = []; $shirt_match_out_carder = 0; $shirt_match_out_smv = 0;
     }
     try {
-        $trouser_components = getComponents($conn, 2);
+        $trouser_components = dedupeComponentRows(getComponents($conn, 2));
         $trouser_match_out = calculateMatchOutFixed($conn, 2, $date, $work_hours, $trouser_components);
         $trouser_match_out_carder = (int)($trouser_match_out['unit_carder'] ?? 0);
         $trouser_match_out_smv = (float)($trouser_match_out['unit_smv'] ?? 0);
@@ -80,9 +98,9 @@ if ($is_assembly_division) {
 }
 
 // ============================================================
-// PROCESS COMPONENTS
+// FIX 1: PROCESS COMPONENTS (deduplicated)
 // ============================================================
-$components = getComponents($conn, $division_id);
+$components = dedupeComponentRows(getComponents($conn, $division_id));
 $component_data = [];
 
 foreach ($components as $comp) {
@@ -157,7 +175,6 @@ foreach ($components as $comp) {
         $data['day_total'] = $day_total;
         $data['ern_minutes'] = $day_total * $data['ttl_sam_pc'];
         
-        // Assembly Achieved Eff % (ALL rows)
         $data['available_minutes'] = $total_assemble_carder * $data['plan_hours'] * 60;
         
         if ($data['available_minutes'] > 0 && $data['plan_hours'] > 0) {
@@ -178,7 +195,6 @@ foreach ($components as $comp) {
         $data['profit'] = ($profit_multiplier * $data['day_total']) - (7365 * $total_assemble_carder);
         
     } else {
-        // SHIRT/TROUSER/COAT (90% target)
         if ($data['unit_smv'] > 0 && $data['unit_carder'] > 0) {
             $data['day_forecast'] = ($data['unit_carder'] * 600 / $data['unit_smv']) * 0.90;
         } else {
@@ -213,30 +229,34 @@ foreach ($components as $comp) {
 }
 
 // ============================================================
-// DHU MANUAL VALUES — Load from DB (unit_id = 998)
+// FIX 4: DHU — Load from DB
+// Regular divisions: unit_id = 998, hour_1
+// Assembly: per-hour DHU per row stored in unit_ids 900-906
 // ============================================================
 $dhu_saved = getReportData($conn, $division_id, 998, $date);
 $dhu_manual_value = (float)($dhu_saved['hour_1'] ?? 0);
+$lean_total_dhu_value = (float)($dhu_saved['hour_8'] ?? 0);
 
-// Assembly row DHU map
-$assembly_dhu_map = [
-    'SHIRT'       => 1,
-    'SHIRT MTM'   => 2,
-    'TROUSER'     => 3,
-    'TROUSER MTM' => 4,
-    'COAT'        => 5,
-    'COAT MTM'    => 6,
-    'KNIT'        => 7,
+// Assembly per-hour DHU per row
+$assembly_dhu_units = [
+    'SHIRT'       => 900,
+    'SHIRT MTM'   => 901,
+    'TROUSER'     => 902,
+    'TROUSER MTM' => 903,
+    'COAT'        => 904,
+    'COAT MTM'    => 905,
+    'KNIT'        => 906,
 ];
 
-// Load per-row DHU values for Assembly
-$assembly_row_dhu = [];
-foreach ($assembly_dhu_map as $row_name => $hour_col) {
-    $assembly_row_dhu[$row_name] = (float)($dhu_saved["hour_$hour_col"] ?? 0);
+$assembly_row_dhu_hours = [];
+foreach ($assembly_dhu_units as $row_name => $dhu_unit_id) {
+    $saved = getReportData($conn, 7, $dhu_unit_id, $date);
+    $arr = [];
+    for ($h = 1; $h <= 11; $h++) {
+        $arr[$h] = (float)($saved["hour_$h"] ?? 0);
+    }
+    $assembly_row_dhu_hours[$row_name] = $arr;
 }
-
-// Lean Total DHU
-$lean_total_dhu_value = (float)($dhu_saved['hour_8'] ?? 0);
 
 // ============================================================
 // MATCH OUT DATA (Shirt/Trouser/Coat) - READ ONLY
@@ -264,7 +284,7 @@ foreach ($component_data as $cd) {
 }
 
 // ============================================================
-// ASSEMBLY DATA (for Shirt/Trouser pages)
+// ASSEMBLY DATA (for Shirt/Trouser pages) - deduplicated
 // ============================================================
 $assembly_shirt_row = null;
 $assembly_shirt_mtm_row = null;
@@ -275,7 +295,7 @@ $assembly_coat_mtm_row = null;
 $assembly_knit_row = null;
 
 $assembly_division_id = 7;
-$assembly_components = getComponents($conn, $assembly_division_id);
+$assembly_components = dedupeComponentRows(getComponents($conn, $assembly_division_id));
 
 $assembly_all_data = [];
 foreach ($assembly_components as $comp) {
@@ -649,13 +669,24 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                     </tr>
                     <?php if ($is_assembly_division): 
                         $comp_row_name = strtoupper(trim($comp['name']));
-                        $comp_dhu_value = $assembly_row_dhu[$comp_row_name] ?? 0;
+                        $comp_dhu_hours = $assembly_row_dhu_hours[$comp_row_name] ?? array_fill(1, 11, 0);
                     ?>
+                    <!-- FIX 2: Assembly DHU sub-row (correct column count) -->
                     <tr class="assembly-dhu-row" data-dhu-for="<?php echo $comp['id']; ?>">
                         <td colspan="2" style="font-weight:700; color:var(--dhu-red);">DHU %</td>
-                        <td colspan="<?php echo 9 + $work_hours + 1; ?>" style="color:var(--dhu-red); font-weight:700; text-align:center;">
-                            <?php echo number_format($comp_dhu_value, 1); ?>%
-                        </td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <?php for ($h = 1; $h <= $work_hours; $h++): ?>
+                        <td style="color:var(--dhu-red); font-weight:700; text-align:center;"><?php echo number_format($comp_dhu_hours[$h] ?? 0, 1); ?>%</td>
+                        <?php endfor; ?>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
@@ -697,12 +728,23 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                         <td><?php echo number_format($style_epm, 1); ?></td>
                         <td style="font-weight:700; color:<?php echo $profit >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo round($profit); ?></td>
                     </tr>
-                    <?php $knit_dhu_value = $assembly_row_dhu['KNIT'] ?? 0; ?>
+                    <?php $knit_dhu_hours = $assembly_row_dhu_hours['KNIT'] ?? array_fill(1, 11, 0); ?>
+                    <!-- FIX 3: KNIT DHU row (correct column count) -->
                     <tr class="assembly-dhu-row">
                         <td colspan="2" style="font-weight:700; color:var(--dhu-red);">DHU %</td>
-                        <td colspan="<?php echo 9 + $work_hours + 1; ?>" style="color:var(--dhu-red); font-weight:700; text-align:center;">
-                            <?php echo number_format($knit_dhu_value, 1); ?>%
-                        </td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <?php for ($h = 1; $h <= $work_hours; $h++): ?>
+                        <td style="color:var(--dhu-red); font-weight:700; text-align:center;"><?php echo number_format($knit_dhu_hours[$h] ?? 0, 1); ?>%</td>
+                        <?php endfor; ?>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
@@ -746,16 +788,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                         <td style="font-weight:700; color:<?php echo $mo_profit_sum >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo round($mo_profit_sum); ?></td>
                     </tr>
                     
-                    <tr class="dhu-row" id="dhuRow">
-                        <td colspan="<?php echo 10 + $work_hours; ?>" style="text-align:right; padding-right:12px; font-weight:700; color:var(--dhu-red);">
-                            DHU %
-                        </td>
-                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
-                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
-                        <td style="color:var(--dhu-red); font-weight:700; font-size:14px;">
-                            <?php echo number_format($dhu_manual_value, 1); ?>%
-                        </td>
-                    </tr>
+                    
                     
                     <tr class="total-row">
                         <td colspan="<?php echo 10 + $work_hours; ?>" style="text-align:right; padding-right:12px; font-weight:700;">
@@ -782,7 +815,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                             <td colspan="<?php echo 11 + $work_hours; ?>" style="text-align:center; font-weight:700; color:var(--primary);">─── ASSEMBLY ───</td>
                         </tr>
                         
-                        <?php if (!empty($assembly_shirt_row)): $data = $assembly_shirt_row; $asm_dhu_value = $assembly_row_dhu['SHIRT'] ?? 0; ?>
+                        <?php if (!empty($assembly_shirt_row)): $data = $assembly_shirt_row; $asm_dhu_hours = $assembly_row_dhu_hours['SHIRT'] ?? array_fill(1, 11, 0); ?>
                         <tr>
                             <td>Assembly</td>
                             <td>SHIRT</td>
@@ -802,16 +835,26 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                         </tr>
                         <tr class="assembly-dhu-row">
                             <td colspan="2" style="font-weight:700; color:var(--dhu-red);">DHU %</td>
-                            <td colspan="<?php echo 12 + $work_hours; ?>" style="color:var(--dhu-red); font-weight:700; text-align:center;">
-                                <?php echo number_format($asm_dhu_value, 1); ?>%
-                            </td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <?php for ($h = 1; $h <= $work_hours; $h++): ?>
+                            <td style="color:var(--dhu-red); font-weight:700; text-align:center;"><?php echo number_format($asm_dhu_hours[$h] ?? 0, 1); ?>%</td>
+                            <?php endfor; ?>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
                             <td style="color:var(--dhu-red); font-weight:700;">—</td>
                             <td style="color:var(--dhu-red); font-weight:700;">—</td>
                             <td style="color:var(--dhu-red); font-weight:700;">—</td>
                         </tr>
                         <?php endif; ?>
                         
-                        <?php if (!empty($assembly_shirt_mtm_row)): $data = $assembly_shirt_mtm_row; $asm_dhu_value = $assembly_row_dhu['SHIRT MTM'] ?? 0; ?>
+                        <?php if (!empty($assembly_shirt_mtm_row)): $data = $assembly_shirt_mtm_row; $asm_dhu_hours = $assembly_row_dhu_hours['SHIRT MTM'] ?? array_fill(1, 11, 0); ?>
                         <tr>
                             <td>Assembly</td>
                             <td>SHIRT MTM</td>
@@ -831,9 +874,19 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                         </tr>
                         <tr class="assembly-dhu-row">
                             <td colspan="2" style="font-weight:700; color:var(--dhu-red);">DHU %</td>
-                            <td colspan="<?php echo 12 + $work_hours; ?>" style="color:var(--dhu-red); font-weight:700; text-align:center;">
-                                <?php echo number_format($asm_dhu_value, 1); ?>%
-                            </td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <?php for ($h = 1; $h <= $work_hours; $h++): ?>
+                            <td style="color:var(--dhu-red); font-weight:700; text-align:center;"><?php echo number_format($asm_dhu_hours[$h] ?? 0, 1); ?>%</td>
+                            <?php endfor; ?>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
                             <td style="color:var(--dhu-red); font-weight:700;">—</td>
                             <td style="color:var(--dhu-red); font-weight:700;">—</td>
                             <td style="color:var(--dhu-red); font-weight:700;">—</td>
@@ -846,7 +899,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                             <td colspan="<?php echo 11 + $work_hours; ?>" style="text-align:center; font-weight:700; color:var(--primary);">─── ASSEMBLY ───</td>
                         </tr>
                         
-                        <?php if (!empty($assembly_trouser_row)): $data = $assembly_trouser_row; $asm_dhu_value = $assembly_row_dhu['TROUSER'] ?? 0; ?>
+                        <?php if (!empty($assembly_trouser_row)): $data = $assembly_trouser_row; $asm_dhu_hours = $assembly_row_dhu_hours['TROUSER'] ?? array_fill(1, 11, 0); ?>
                         <tr>
                             <td>Assembly</td>
                             <td>TROUSER</td>
@@ -866,16 +919,26 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                         </tr>
                         <tr class="assembly-dhu-row">
                             <td colspan="2" style="font-weight:700; color:var(--dhu-red);">DHU %</td>
-                            <td colspan="<?php echo 12 + $work_hours; ?>" style="color:var(--dhu-red); font-weight:700; text-align:center;">
-                                <?php echo number_format($asm_dhu_value, 1); ?>%
-                            </td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <?php for ($h = 1; $h <= $work_hours; $h++): ?>
+                            <td style="color:var(--dhu-red); font-weight:700; text-align:center;"><?php echo number_format($asm_dhu_hours[$h] ?? 0, 1); ?>%</td>
+                            <?php endfor; ?>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
                             <td style="color:var(--dhu-red); font-weight:700;">—</td>
                             <td style="color:var(--dhu-red); font-weight:700;">—</td>
                             <td style="color:var(--dhu-red); font-weight:700;">—</td>
                         </tr>
                         <?php endif; ?>
                         
-                        <?php if (!empty($assembly_trouser_mtm_row)): $data = $assembly_trouser_mtm_row; $asm_dhu_value = $assembly_row_dhu['TROUSER MTM'] ?? 0; ?>
+                        <?php if (!empty($assembly_trouser_mtm_row)): $data = $assembly_trouser_mtm_row; $asm_dhu_hours = $assembly_row_dhu_hours['TROUSER MTM'] ?? array_fill(1, 11, 0); ?>
                         <tr>
                             <td>Assembly</td>
                             <td>TROUSER MTM</td>
@@ -895,9 +958,19 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                         </tr>
                         <tr class="assembly-dhu-row">
                             <td colspan="2" style="font-weight:700; color:var(--dhu-red);">DHU %</td>
-                            <td colspan="<?php echo 12 + $work_hours; ?>" style="color:var(--dhu-red); font-weight:700; text-align:center;">
-                                <?php echo number_format($asm_dhu_value, 1); ?>%
-                            </td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <?php for ($h = 1; $h <= $work_hours; $h++): ?>
+                            <td style="color:var(--dhu-red); font-weight:700; text-align:center;"><?php echo number_format($asm_dhu_hours[$h] ?? 0, 1); ?>%</td>
+                            <?php endfor; ?>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                            <td style="color:var(--dhu-red); font-weight:700;">—</td>
                             <td style="color:var(--dhu-red); font-weight:700;">—</td>
                             <td style="color:var(--dhu-red); font-weight:700;">—</td>
                             <td style="color:var(--dhu-red); font-weight:700;">—</td>
@@ -931,10 +1004,13 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                         <td style="font-weight:700;"><?php echo round((500 * ($lt['day_total'] ?? 0)) - (7365 * (($lt['unit_carder'] ?? 0) + ($shirt_match_out['unit_carder'] ?? 0)))); ?></td>
                     </tr>
                     
+                    <!-- FIX 4: Lean Total DHU row (already correct value) -->
                     <tr class="dhu-row">
-                        <td colspan="<?php echo 10 + $work_hours; ?>" style="text-align:right; padding-right:12px; font-weight:700; color:var(--dhu-red);">Lean Total DHU %</td>
-                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
-                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td colspan="<?php echo 10 + $work_hours; ?>" style="text-align:right; padding-right:12px; font-weight:700; color:var(--dhu-red);">
+                                                        Lean Total DHU %
+                        </td>
+                        <td></td>
+                        <td></td>
                         <td style="color:var(--dhu-red); font-weight:700; font-size:14px;" id="lt-dhu-value">
                             <?php echo number_format($lean_total_dhu_value, 1); ?>%
                         </td>
@@ -996,6 +1072,29 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         updateClock();
         setInterval(updateClock, 60000);
         
+                // Assembly DHU rows: DHU Day Total, Achieved Eff %, blank red dashes
+        (function() {
+            var H = <?php echo (int)$work_hours; ?>;
+            document.querySelectorAll('tr.assembly-dhu-row').forEach(function(tr) {
+                var cells = tr.children;
+                for (var i = 0; i < cells.length; i++) {
+                    if (cells[i].textContent.trim() === '—') cells[i].textContent = '';
+                }
+                var dhuTotal = 0;
+                for (var h = 0; h < H; h++) {
+                    if (cells[9 + h]) dhuTotal += parseFloat(cells[9 + h].textContent) || 0;
+                }
+                var prod = tr.previousElementSibling;
+                var dayTotal = 0;
+                if (prod && prod.children[10 + H]) {
+                    dayTotal = parseFloat(prod.children[10 + H].textContent.replace(/,/g, '')) || 0;
+                }
+                var eff = dayTotal > 0 ? (dhuTotal / dayTotal) * 100 : 0;
+                if (cells[9 + H])     cells[9 + H].textContent     = dhuTotal > 0 ? dhuTotal.toFixed(1) : '';
+                if (cells[9 + H + 2]) cells[9 + H + 2].textContent = dhuTotal > 0 ? eff.toFixed(1) + '%' : '';
+            });
+        })();
+
         function downloadReportCSV() {
             var date = '<?php echo $date; ?>';
             var division = '<?php echo $division_id; ?>';
@@ -1003,5 +1102,20 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             window.location.href = 'export_view_report_csv.php?date=' + encodeURIComponent(date) + '&division=' + encodeURIComponent(division) + '&hours=' + encodeURIComponent(hours);
         }
     </script>
+    <script>
+// Silent auto-refresh every 15 minutes — paused while user interacts
+let refreshTimer = setTimeout(function() {
+    window.location.reload();
+}, 900000);
+
+['mousedown', 'wheel', 'touchstart', 'keydown'].forEach(evt => {
+    window.addEventListener(evt, () => {
+        clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(function() {
+            window.location.reload();
+        }, 900000);
+    }, { passive: true });
+});
+</script>
 </body>
 </html>

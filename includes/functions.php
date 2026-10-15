@@ -5,6 +5,42 @@ require_once __DIR__ . '/../config/database.php';
 const TARGET_90 = 0.90;
 const TARGET_80 = 0.80;
 
+// Validate date (Y-m-d). Invalid or future date => today
+function normalizeReportDate($d = null) {
+    $today = date('Y-m-d');
+    if (!$d) return $today;
+    $dt = DateTime::createFromFormat('Y-m-d', $d);
+    if (!$dt || $dt->format('Y-m-d') !== $d) return $today;
+    return ($d > $today) ? $today : $d;
+}
+
+// Auto-detect working hours already saved for a date
+function detectWorkHours($conn, $division_id, $date, $default = 10) {
+    try {
+        $stmt = $conn->prepare("
+            SELECT MAX(CASE
+                WHEN hour_11 > 0 THEN 11 WHEN hour_10 > 0 THEN 10
+                WHEN hour_9 > 0 THEN 9 WHEN hour_8 > 0 THEN 8
+                WHEN hour_7 > 0 THEN 7 WHEN hour_6 > 0 THEN 6
+                WHEN hour_5 > 0 THEN 5 WHEN hour_4 > 0 THEN 4
+                WHEN hour_3 > 0 THEN 3 WHEN hour_2 > 0 THEN 2
+                WHEN hour_1 > 0 THEN 1 ELSE 0 END) AS max_h,
+                MAX(worked_hours) AS max_w
+            FROM production_reports
+            WHERE devition_id = ? AND report_date = ?
+              AND unit_id NOT IN (996, 997, 998, 999)
+              AND unit_id NOT BETWEEN 900 AND 906
+        ");
+        $stmt->execute([$division_id, $date]);
+        $r = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($r) {
+            $h = max((int)$r['max_h'], (int)ceil((float)$r['max_w']));
+            if ($h > 0) return max(1, min(11, $h));
+        }
+    } catch (Exception $e) {}
+    return $default;
+}
+
 function safeDivide($n, $d) { 
     return ($d == 0) ? 0.0 : (float)$n / (float)$d; 
 }

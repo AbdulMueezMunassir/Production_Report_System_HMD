@@ -6,11 +6,27 @@ require_once __DIR__ . '/includes/functions.php';
 
 requireLogin();
 
+// ============================================================
+// Remove duplicate component rows (same name + same match-out flag)
+// Keeps the first one returned by getComponents()
+// ============================================================
+if (!function_exists('dedupeComponentRows')) {
+    function dedupeComponentRows($list) {
+        $seen = [];
+        $out = [];
+        foreach ((array)$list as $c) {
+            $key = (!empty($c['is_match_out']) ? 'MO:' : 'C:') . strtoupper(trim($c['name']));
+            if (isset($seen[$key])) continue;
+            $seen[$key] = true;
+            $out[] = $c;
+        }
+        return $out;
+    }
+}
+
 $conn = getDB();
 $division_id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
-$date = isset($_GET['date']) ? $_GET['date'] : date('Y-m-d');
-$work_hours = isset($_GET['hours']) ? (int)$_GET['hours'] : 10;
-$work_hours = max(1, min(11, $work_hours));
+$date = normalizeReportDate($_GET['date'] ?? null);
 
 $div_sql = "SELECT * FROM divisions WHERE id = ?";
 $stmt = $conn->prepare($div_sql);
@@ -23,13 +39,18 @@ if (!$division) {
 }
 
 $is_assembly_division = ($division['type'] === 'assembly');
+$is_direct_staffing_division = in_array($division['type'], ['shirt', 'trouser'], true);
 $division_name = $division['name'];
 
 if ($is_assembly_division) {
     $division_name = 'Assembly';
 }
 
-$components = getComponents($conn, $division_id);
+// Auto-detect working hours (after $conn and $division_id are ready)
+$work_hours = isset($_GET['hours']) ? (int)$_GET['hours'] : detectWorkHours($conn, $division_id, $date, 10);
+$work_hours = max(1, min(11, $work_hours));
+
+$components = dedupeComponentRows(getComponents($conn, $division_id));
 $component_data = [];
 
 $assembly_order = ['SHIRT', 'SHIRT MTM', 'TROUSER', 'TROUSER MTM', 'COAT', 'COAT MTM', 'KNIT'];
@@ -46,7 +67,7 @@ $trouser_match_out_smv = 0;
 
 if ($is_assembly_division) {
     try {
-        $shirt_components = getComponents($conn, 1);
+        $shirt_components = dedupeComponentRows(getComponents($conn, 1));
         $shirt_match_out = calculateMatchOutFixed($conn, 1, $date, $work_hours, $shirt_components);
         $shirt_match_out_carder = (int)($shirt_match_out['unit_carder'] ?? 0);
         $shirt_match_out_smv = (float)($shirt_match_out['unit_smv'] ?? 0);
@@ -55,7 +76,7 @@ if ($is_assembly_division) {
     }
     
     try {
-        $trouser_components = getComponents($conn, 2);
+        $trouser_components = dedupeComponentRows(getComponents($conn, 2));
         $trouser_match_out = calculateMatchOutFixed($conn, 2, $date, $work_hours, $trouser_components);
         $trouser_match_out_carder = (int)($trouser_match_out['unit_carder'] ?? 0);
         $trouser_match_out_smv = (float)($trouser_match_out['unit_smv'] ?? 0);
@@ -193,32 +214,34 @@ foreach ($components as $comp) {
 }
 
 // ============================================================
-// DHU MANUAL — Load saved values from DB (unit_id = 998)
-// hour_1..hour_7 store per-row DHU values for Assembly
-// hour_8 stores Lean Total DHU
+// DHU MANUAL — Assembly page: per-hour DHU per row
+// Each row has its own DHU unit_id (900-906)
+// hour_1..hour_N store DHU % values for hours 1 to N
 // ============================================================
-$dhu_saved = getReportData($conn, $division_id, 998, $date);
-$dhu_manual_value = (float)($dhu_saved['hour_1'] ?? 0);
-
-// Assembly row DHU map (row name → hour column)
-$assembly_dhu_map = [
-    'SHIRT'       => 1,
-    'SHIRT MTM'   => 2,
-    'TROUSER'     => 3,
-    'TROUSER MTM' => 4,
-    'COAT'        => 5,
-    'COAT MTM'    => 6,
-    'KNIT'        => 7,
-    'LEAN_TOTAL'  => 8,   // ← Lean Total DHU stored in hour_8
+$assembly_dhu_units = [
+    'SHIRT'       => 900,
+    'SHIRT MTM'   => 901,
+    'TROUSER'     => 902,
+    'TROUSER MTM' => 903,
+    'COAT'        => 904,
+    'COAT MTM'    => 905,
+    'KNIT'        => 906,
 ];
 
-// Load all row DHU values
-$assembly_row_dhu = [];
-foreach ($assembly_dhu_map as $row_name => $hour_col) {
-    $assembly_row_dhu[$row_name] = (float)($dhu_saved["hour_$hour_col"] ?? 0);
+// Load per-hour DHU per row
+$assembly_row_dhu_hours = [];
+foreach ($assembly_dhu_units as $row_name => $dhu_unit_id) {
+    $saved = getReportData($conn, 7, $dhu_unit_id, $date);
+    $arr = [];
+    for ($h = 1; $h <= 11; $h++) {
+        $arr[$h] = (float)($saved["hour_$h"] ?? 0);
+    }
+    $assembly_row_dhu_hours[$row_name] = $arr;
 }
 
-// Lean Total DHU (hour_8)
+// Legacy: single daily DHU value (for non-Assembly divisions)
+$dhu_saved = getReportData($conn, $division_id, 998, $date);
+$dhu_manual_value = (float)($dhu_saved['hour_1'] ?? 0);
 $lean_total_dhu_value = (float)($dhu_saved['hour_8'] ?? 0);
 
 // Calculate Match Out (aggregate from components) — but now editable
@@ -253,7 +276,7 @@ $assembly_coat_mtm_row = null;
 $assembly_knit_row = null;
 
 $assembly_division_id = 7;
-$assembly_components = getComponents($conn, $assembly_division_id);
+$assembly_components = dedupeComponentRows(getComponents($conn, $assembly_division_id));
 
 $assembly_all_data = [];
 foreach ($assembly_components as $comp) {
@@ -378,7 +401,7 @@ if ($is_assembly_division) {
     foreach ($components as $comp) {
         if ($comp['is_match_out']) continue;
         $data = $component_data[$comp['id']] ?? [];
-        if ($data['ttl_sam_pc'] > 0 || $data['unit_smv'] > 0) {
+        if (($data['ttl_sam_pc'] ?? 0) > 0 || ($data['unit_smv'] ?? 0) > 0) {
             $assembly_rows[] = $data;
         }
     }
@@ -388,6 +411,18 @@ if ($is_assembly_division) {
 }
 
 $stats = getDivisionStats($conn, $division_id, $date, $work_hours);
+
+// Make the "X of N units" header match the de-duplicated rows
+$display_total_units = 0;
+foreach ($components as $c) {
+    if (!empty($c['is_match_out'])) continue;
+    $display_total_units++;
+}
+$stats['total_units'] = $display_total_units;
+if (($stats['setup_units'] ?? 0) > $display_total_units) {
+    $stats['setup_units'] = $display_total_units;
+}
+
 $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
 
 $knit_comp_id = 0;
@@ -403,7 +438,7 @@ if ($is_assembly_division) {
             $stmt = $conn->prepare("INSERT INTO components (division_id, name, is_match_out, display_order) VALUES (?, ?, ?, ?)");
             $stmt->execute([7, 'KNIT', 0, 7]);
             $knit_comp_id = $conn->lastInsertId();
-            $assembly_components = getComponents($conn, $assembly_division_id);
+            $assembly_components = dedupeComponentRows(getComponents($conn, $assembly_division_id));
         } catch (Exception $e) {
             $knit_comp_id = 0;
         }
@@ -559,10 +594,14 @@ if ($is_assembly_division) {
         <div class="page-header">
             <div class="title">
                 <h2>All deviations — <?php echo date('Y-m-d', strtotime($date)); ?></h2>
-                <div class="sub"><?php echo htmlspecialchars($division_name); ?></div>
+                <div class="sub"><?php echo htmlspecialchars($division_name); ?>
+                    <?php if ($date !== date('Y-m-d')): ?>
+                        <span style="margin-left:8px;padding:2px 10px;border-radius:10px;background:#fff3cd;color:#856404;font-size:12px;font-weight:700;">Editing previous date</span>
+                    <?php endif; ?>
+                </div>
             </div>
             <div class="controls">
-                <input type="date" id="reportDate" value="<?php echo $date; ?>" onchange="updatePage()">
+                <input type="date" id="reportDate" value="<?php echo $date; ?>" max="<?php echo date('Y-m-d'); ?>" onchange="changeDate()">
                 <span class="hours-label">Hours:</span>
                 <input type="number" id="workHours" class="hours-input" value="<?php echo $work_hours; ?>" min="1" max="11" onchange="updatePage()">
                 <a href="dashboard.php" class="btn btn-back">← Back</a>
@@ -588,6 +627,10 @@ if ($is_assembly_division) {
                         <th style="min-width:65px;">TTl SAM/Pcs</th>
                         <th style="min-width:65px;"><?php echo $is_assembly_division ? 'Section SAM/Pc' : 'Unit SMV'; ?></th>
                         <th style="min-width:65px;"><?php echo $is_assembly_division ? 'Assemble Carder' : 'Unit Carder'; ?></th>
+                        <?php if ($is_direct_staffing_division): ?>
+                        <th style="min-width:80px;">Direct On Roll</th>
+                        <th style="min-width:80px;">Direct Present</th>
+                        <?php endif; ?>
                         <?php if ($is_assembly_division): ?>
                         <th style="min-width:75px;">Total Assemble Carder</th>
                         <?php endif; ?>
@@ -607,7 +650,7 @@ if ($is_assembly_division) {
                 </thead>
                 <tbody>
                     <?php if (empty($components)): ?>
-                    <tr><td colspan="<?php echo 11 + $work_hours + ($is_assembly_division ? 1 : 0); ?>" style="padding:30px; color:var(--steel); text-align:center; font-weight:500;">No components found.</td></tr>
+                    <tr><td colspan="<?php echo 11 + $work_hours + ($is_assembly_division ? 1 : 0) + ($is_direct_staffing_division ? 2 : 0); ?>" style="padding:30px; color:var(--steel); text-align:center; font-weight:500;">No components found.</td></tr>
                     <?php else: ?>
                     
                     <?php 
@@ -659,6 +702,10 @@ if ($is_assembly_division) {
                                    <?php echo $is_readonly_smv ? 'readonly' : ''; ?>>
                         </td>
                         <td class="editable-yellow"><input type="number" class="field-input" data-field="unit_carder" value="<?php echo $data['unit_carder'] ?? 0; ?>"></td>
+                        <?php if ($is_direct_staffing_division): ?>
+                        <td class="editable-yellow"><input type="number" min="0" step="1" class="field-input" data-field="direct_on_roll" value="<?php echo $data['direct_on_roll'] ?? 0; ?>"></td>
+                        <td class="editable-yellow"><input type="number" min="0" step="1" class="field-input" data-field="direct_present" value="<?php echo $data['direct_present'] ?? 0; ?>"></td>
+                        <?php endif; ?>
                         <?php if ($is_assembly_division): ?>
                         <td class="calculated total-carder-col total-assemble-carder"><?php echo $total_assemble_carder; ?></td>
                         <?php endif; ?>
@@ -677,19 +724,33 @@ if ($is_assembly_division) {
                     </tr>
                     <?php if ($is_assembly_division): 
                         $comp_row_name = strtoupper(trim($comp['name']));
-                        $comp_dhu_hour = $assembly_dhu_map[$comp_row_name] ?? 0;
-                        $comp_dhu_value = $assembly_row_dhu[$comp_row_name] ?? 0;
+                        $comp_dhu_unit = $assembly_dhu_units[$comp_row_name] ?? 0;
+                        $comp_dhu_hours = $assembly_row_dhu_hours[$comp_row_name] ?? array_fill(1, 11, 0);
                     ?>
-                    <tr class="assembly-dhu-row" data-dhu-for="<?php echo $comp['id']; ?>" data-dhu-row="<?php echo htmlspecialchars($comp_row_name); ?>" data-dhu-hour="<?php echo $comp_dhu_hour; ?>">
+                    <tr class="assembly-dhu-row" data-dhu-for="<?php echo $comp['id']; ?>" data-dhu-row="<?php echo htmlspecialchars($comp_row_name); ?>" data-dhu-unit="<?php echo $comp_dhu_unit; ?>">
                         <td colspan="2" style="font-weight:700; color:var(--dhu-red);">DHU %</td>
-                        <td colspan="<?php echo 9 + $work_hours + 1; ?>" style="color:var(--dhu-red); font-weight:700; text-align:center;">
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <?php for ($h = 1; $h <= $work_hours; $h++): ?>
+                        <td style="background:var(--dhu-bg);">
                             <input type="number" step="0.1" min="0" 
-                                   class="assembly-dhu-input" 
+                                   class="assembly-dhu-hour-input" 
                                    data-row-name="<?php echo htmlspecialchars($comp_row_name); ?>"
-                                   data-hour-col="<?php echo $comp_dhu_hour; ?>"
-                                   value="<?php echo number_format($comp_dhu_value, 1, '.', ''); ?>"
-                                   style="width:60px; text-align:center; font-weight:700; color:var(--dhu-red); background:rgba(255,235,59,0.4); border:1px solid rgba(220,53,69,0.3); border-radius:4px; padding:2px;">
+                                   data-dhu-unit="<?php echo $comp_dhu_unit; ?>"
+                                   data-hour="<?php echo $h; ?>"
+                                   value="<?php echo number_format($comp_dhu_hours[$h] ?? 0, 1, '.', ''); ?>"
+                                   style="width:100%; min-width:30px; text-align:center; font-weight:700; color:var(--dhu-red); background:rgba(255,235,59,0.4); border:1px solid rgba(220,53,69,0.3); border-radius:3px; padding:1px; font-size:10px;">
                         </td>
+                        <?php endfor; ?>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
@@ -744,19 +805,33 @@ if ($is_assembly_division) {
                         <td class="calculated profit-value" style="font-weight:700; color:<?php echo $profit >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo round($profit); ?></td>
                     </tr>
                     <?php 
-                    $knit_dhu_hour = $assembly_dhu_map['KNIT'] ?? 7;
-                    $knit_dhu_value = $assembly_row_dhu['KNIT'] ?? 0;
+                    $knit_dhu_unit = $assembly_dhu_units['KNIT'] ?? 906;
+                    $knit_dhu_hours = $assembly_row_dhu_hours['KNIT'] ?? array_fill(1, 11, 0);
                     ?>
-                    <tr class="assembly-dhu-row" data-dhu-row="KNIT" data-dhu-hour="<?php echo $knit_dhu_hour; ?>">
+                    <tr class="assembly-dhu-row" data-dhu-row="KNIT" data-dhu-unit="<?php echo $knit_dhu_unit; ?>">
                         <td colspan="2" style="font-weight:700; color:var(--dhu-red);">DHU %</td>
-                        <td colspan="<?php echo 9 + $work_hours + 1; ?>" style="color:var(--dhu-red); font-weight:700; text-align:center;">
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <?php for ($h = 1; $h <= $work_hours; $h++): ?>
+                        <td style="background:var(--dhu-bg);">
                             <input type="number" step="0.1" min="0" 
-                                   class="assembly-dhu-input" 
+                                   class="assembly-dhu-hour-input" 
                                    data-row-name="KNIT"
-                                   data-hour-col="<?php echo $knit_dhu_hour; ?>"
-                                   value="<?php echo number_format($knit_dhu_value, 1, '.', ''); ?>"
-                                   style="width:60px; text-align:center; font-weight:700; color:var(--dhu-red); background:rgba(255,235,59,0.4); border:1px solid rgba(220,53,69,0.3); border-radius:4px; padding:2px;">
+                                   data-dhu-unit="<?php echo $knit_dhu_unit; ?>"
+                                   data-hour="<?php echo $h; ?>"
+                                   value="<?php echo number_format($knit_dhu_hours[$h] ?? 0, 1, '.', ''); ?>"
+                                   style="width:100%; min-width:30px; text-align:center; font-weight:700; color:var(--dhu-red); background:rgba(255,235,59,0.4); border:1px solid rgba(220,53,69,0.3); border-radius:3px; padding:1px; font-size:10px;">
                         </td>
+                        <?php endfor; ?>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
+                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
                         <td style="color:var(--dhu-red); font-weight:700;">—</td>
@@ -782,10 +857,7 @@ if ($is_assembly_division) {
                         }
                         $mo_acvd_eff = ($mo_denominator > 0) ? ($mo_ern_minutes / $mo_denominator) : 0;
                         
-                        // ============================================================
                         // MATCH OUT PROFIT = SUM OF ALL COMPONENT PROFITS ABOVE
-                        // Using a NEW variable name to bypass any cached values
-                        // ============================================================
                         $match_out_summed_profit = 0;
                         foreach ($components as $c) {
                             if ($c['is_match_out']) continue;
@@ -800,6 +872,7 @@ if ($is_assembly_division) {
                         <td style="font-weight:700;" id="mo-ttl-sam"><?php echo number_format($match_out['ttl_sam'] ?? 0, 4); ?></td>
                         <td style="font-weight:700;" id="mo-unit-smv"><?php echo number_format($mo_unit_smv, 2); ?></td>
                         <td style="font-weight:700;" id="mo-unit-carder"><?php echo $mo_unit_carder; ?></td>
+                        <?php if ($is_direct_staffing_division): ?><td>—</td><td>—</td><?php endif; ?>
                         <td style="font-weight:700;" id="mo-plan-hours"><?php echo number_format($mo_plan_hours, 1); ?></td>
                         <td style="font-weight:700;" id="mo-worked-hours"><?php echo number_format($mo_worked_hours, 1); ?></td>
                         <td class="calculated" id="mo-available-minutes"><?php echo number_format($mo_available_minutes, 0); ?></td>
@@ -812,24 +885,12 @@ if ($is_assembly_division) {
                         <td style="font-weight:700; color:var(--primary);" id="mo-acvd-eff"><?php echo round($mo_acvd_eff * 100); ?>%</td>
                         <td class="editable-yellow"><input type="number" step="0.1" class="epm-input" data-field="epm" value="13.2" id="mo-epm"></td>
                         <td class="calculated" id="mo-profit" style="font-weight:700; color:<?php echo $mo_profit >= 0 ? '#28a745' : '#dc3545'; ?>;"><?php echo round($mo_profit); ?></td>
-                        <!-- DEBUG mo_profit = <?php echo $mo_profit; ?> | count component_data = <?php echo count($component_data); ?> | summed = <?php echo $match_out_summed_profit ?? 'N/A'; ?> -->
                     </tr>
                     
-                    <tr class="dhu-row" id="dhuRow">
-                        <td colspan="<?php echo 10 + $work_hours; ?>" style="text-align:right; padding-right:12px; font-weight:700; color:var(--dhu-red);">
-                            DHU %
-                        </td>
-                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
-                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
-                        <td style="color:var(--dhu-red); font-weight:700; font-size:14px;">
-                            <input type="number" step="0.1" min="0" id="dhu-manual-input" 
-                                   value="<?php echo number_format($dhu_manual_value, 1, '.', ''); ?>"
-                                   style="width:60px; text-align:center; font-weight:700; color:var(--dhu-red); background:rgba(255,235,59,0.4); border:1px solid rgba(220,53,69,0.3); border-radius:4px; padding:2px;">
-                        </td>
-                    </tr>
+                    
                     
                     <tr class="total-row">
-                        <td colspan="<?php echo 10 + $work_hours; ?>" style="text-align:right; padding-right:12px; font-weight:700;">
+                        <td colspan="<?php echo 10 + $work_hours + ($is_direct_staffing_division ? 2 : 0); ?>" style="text-align:right; padding-right:12px; font-weight:700;">
                             Total / <?php echo htmlspecialchars($division_name); ?>:
                         </td>
                         <td style="font-weight:700;"><?php echo number_format($total_day_ttl, 0); ?></td>
@@ -851,7 +912,7 @@ if ($is_assembly_division) {
                     
                         <?php if ($division_name === 'Shirt'): ?>
                         <tr class="section-divider">
-                            <td colspan="<?php echo 11 + $work_hours; ?>" style="text-align:center; font-weight:700; color:var(--primary);">─── ASSEMBLY ───</td>
+                            <td colspan="<?php echo 11 + $work_hours + ($is_direct_staffing_division ? 2 : 0); ?>" style="text-align:center; font-weight:700; color:var(--primary);">─── ASSEMBLY ───</td>
                         </tr>
                         
                         <?php if (!empty($assembly_shirt_row)): 
@@ -867,6 +928,7 @@ if ($is_assembly_division) {
                             <td class="editable-yellow"><input type="number" step="0.01" class="field-input" data-field="ttl_sam_pc" value="<?php echo $data['ttl_sam_pc'] ?? 0; ?>"></td>
                             <td class="readonly-cell"><input type="number" step="0.01" class="field-input readonly-smv" data-field="unit_smv" value="<?php echo number_format($data['unit_smv'] ?? 0, 2, '.', ''); ?>" readonly></td>
                             <td class="editable-yellow"><input type="number" class="field-input" data-field="unit_carder" value="<?php echo $data['unit_carder'] ?? 0; ?>"></td>
+                            <?php if ($is_direct_staffing_division): ?><td>—</td><td>—</td><?php endif; ?>
                             <td class="calculated avail-minutes"><?php echo number_format($data['available_minutes'] ?? 0, 0); ?></td>
                             <td class="calculated target-100" style="font-weight:700;"><?php echo number_format($data['target_100'] ?? 0, 0); ?></td>
                             <?php for ($h = 1; $h <= $work_hours; $h++): ?>
@@ -893,6 +955,7 @@ if ($is_assembly_division) {
                             <td class="editable-yellow"><input type="number" step="0.01" class="field-input" data-field="ttl_sam_pc" value="<?php echo $data['ttl_sam_pc'] ?? 0; ?>"></td>
                             <td class="editable-yellow"><input type="number" step="0.01" class="field-input" data-field="unit_smv" value="<?php echo number_format($data['unit_smv'] ?? 0, 2, '.', ''); ?>"></td>
                             <td class="editable-yellow"><input type="number" class="field-input" data-field="unit_carder" value="<?php echo $data['unit_carder'] ?? 0; ?>"></td>
+                            <?php if ($is_direct_staffing_division): ?><td>—</td><td>—</td><?php endif; ?>
                             <td class="calculated avail-minutes"><?php echo number_format($data['available_minutes'] ?? 0, 0); ?></td>
                             <td class="calculated target-100" style="font-weight:700;"><?php echo number_format($data['target_100'] ?? 0, 0); ?></td>
                             <?php for ($h = 1; $h <= $work_hours; $h++): ?>
@@ -910,7 +973,7 @@ if ($is_assembly_division) {
                         
                         <?php if ($division_name === 'Trouser'): ?>
                         <tr class="section-divider">
-                            <td colspan="<?php echo 11 + $work_hours; ?>" style="text-align:center; font-weight:700; color:var(--primary);">─── ASSEMBLY ───</td>
+                            <td colspan="<?php echo 11 + $work_hours + ($is_direct_staffing_division ? 2 : 0); ?>" style="text-align:center; font-weight:700; color:var(--primary);">─── ASSEMBLY ───</td>
                         </tr>
                         
                         <?php if (!empty($assembly_trouser_row)): 
@@ -926,6 +989,7 @@ if ($is_assembly_division) {
                             <td class="editable-yellow"><input type="number" step="0.01" class="field-input" data-field="ttl_sam_pc" value="<?php echo $data['ttl_sam_pc'] ?? 0; ?>"></td>
                             <td class="readonly-cell"><input type="number" step="0.01" class="field-input readonly-smv" data-field="unit_smv" value="<?php echo number_format($data['unit_smv'] ?? 0, 2, '.', ''); ?>" readonly></td>
                             <td class="editable-yellow"><input type="number" class="field-input" data-field="unit_carder" value="<?php echo $data['unit_carder'] ?? 0; ?>"></td>
+                            <?php if ($is_direct_staffing_division): ?><td>—</td><td>—</td><?php endif; ?>
                             <td class="calculated avail-minutes"><?php echo number_format($data['available_minutes'] ?? 0, 0); ?></td>
                             <td class="calculated target-100" style="font-weight:700;"><?php echo number_format($data['target_100'] ?? 0, 0); ?></td>
                             <?php for ($h = 1; $h <= $work_hours; $h++): ?>
@@ -952,6 +1016,7 @@ if ($is_assembly_division) {
                             <td class="editable-yellow"><input type="number" step="0.01" class="field-input" data-field="ttl_sam_pc" value="<?php echo $data['ttl_sam_pc'] ?? 0; ?>"></td>
                             <td class="editable-yellow"><input type="number" step="0.01" class="field-input" data-field="unit_smv" value="<?php echo number_format($data['unit_smv'] ?? 0, 2, '.', ''); ?>"></td>
                             <td class="editable-yellow"><input type="number" class="field-input" data-field="unit_carder" value="<?php echo $data['unit_carder'] ?? 0; ?>"></td>
+                            <?php if ($is_direct_staffing_division): ?><td>—</td><td>—</td><?php endif; ?>
                             <td class="calculated avail-minutes"><?php echo number_format($data['available_minutes'] ?? 0, 0); ?></td>
                             <td class="calculated target-100" style="font-weight:700;"><?php echo number_format($data['target_100'] ?? 0, 0); ?></td>
                             <?php for ($h = 1; $h <= $work_hours; $h++): ?>
@@ -993,21 +1058,7 @@ if ($is_assembly_division) {
                         <td style="font-weight:700;" id="lt-profit"><?php echo round((500 * ($lean_total['day_total'] ?? 0)) - (7365 * (($lean_total['assemble_carder'] ?? 0) + ($shirt_match_out['unit_carder'] ?? 0)))); ?></td>
                     </tr>
                     
-                    <tr class="dhu-row">
-                        <td colspan="<?php echo 10 + $work_hours; ?>" style="text-align:right; padding-right:12px; font-weight:700; color:var(--dhu-red);">
-                            Lean Total DHU %
-                        </td>
-                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
-                        <td style="color:var(--dhu-red); font-weight:700;">—</td>
-                        <td style="color:var(--dhu-red); font-weight:700; font-size:14px;">
-                            <input type="number" step="0.1" min="0" 
-                                   class="assembly-dhu-input" 
-                                   data-row-name="LEAN_TOTAL"
-                                   data-hour-col="8"
-                                   value="<?php echo number_format($lean_total_dhu_value, 1, '.', ''); ?>"
-                                   style="width:60px; text-align:center; font-weight:700; color:var(--dhu-red); background:rgba(255,235,59,0.4); border:1px solid rgba(220,53,69,0.3); border-radius:4px; padding:2px;">
-                        </td>
-                    </tr>
+                
                     
                     <?php if (!empty($grand_total)): ?>
                     <tr class="grand-total-row" id="grandTotalRow">
@@ -1041,6 +1092,9 @@ if ($is_assembly_division) {
     </div>
 
     <script>
+        // Indha page open aana date. Save ellam idhai thaan use pannanum (calendar value illa)
+        var PAGE_DATE = '<?php echo $date; ?>';
+
         var SHIRT_MATCH_OUT_CARDER = <?php echo (int)$shirt_match_out_carder; ?>;
         var TROUSER_MATCH_OUT_CARDER = <?php echo (int)$trouser_match_out_carder; ?>;
         var SHIRT_MATCH_OUT_SMV = <?php echo (float)$shirt_match_out_smv; ?>;
@@ -1061,6 +1115,13 @@ if ($is_assembly_division) {
             var date = document.getElementById('reportDate').value;
             var hours = document.getElementById('workHours').value;
             window.location.href = '?id=<?php echo $division_id; ?>&date=' + date + '&hours=' + hours;
+        }
+
+        // Date maathumbodhu hours pass pannala, so antha date oda hours auto-detect aagum
+        function changeDate() {
+            var date = document.getElementById('reportDate').value;
+            if (!date) return;
+            window.location.href = '?id=<?php echo $division_id; ?>&date=' + date;
         }
 
         function rnd(val) {
@@ -1099,7 +1160,7 @@ if ($is_assembly_division) {
         }
 
         // ============================================================
-        // FIXED: sumComponentProfits() - now EXCLUDES assembly rows
+        // sumComponentProfits() - EXCLUDES assembly rows
         // ============================================================
         function sumComponentProfits() {
             var total = 0;
@@ -1164,7 +1225,7 @@ if ($is_assembly_division) {
             row.find('#mo-profit').text(rnd(profit));
             row.find('#mo-profit').css('color', profit >= 0 ? '#28a745' : '#dc3545');
             
-            var date = $('#reportDate').val();
+            var date = PAGE_DATE;
             var division = <?php echo $division_id; ?>;
             var data = {
                 ttl_sam_pc: parseFloat(row.find('#mo-ttl-sam').text()) || 0,
@@ -1350,7 +1411,7 @@ if ($is_assembly_division) {
         function autoSave(row, compId, isAssembly, hours, calcData) {
             if (!compId || compId <= 0) return;
             
-            var date = $('#reportDate').val();
+            var date = PAGE_DATE;
             var division = <?php echo $division_id; ?>;
             var data = {
                 ttl_sam_pc: calcData.ttl_sam_pc,
@@ -1392,32 +1453,61 @@ if ($is_assembly_division) {
             });
         }
 
-        function updateAssemblyDHU(compId, dayTotal) {
-            // DO NOT auto-update the DHU% — it's now user-entered
-            // Only recalculate DHU for display if needed
-            return;
+                function updateAssemblyDHU(compId, dayTotal) {
+            refreshAssemblyDhuRows();
         }
 
+        // Assembly DHU rows:
+        //   DHU Day Total = sum of hourly DHU
+        //   Achieved Eff % = (Day Total / DHU Day Total) * 100
+        //   red "—" cells = blank
+        function refreshAssemblyDhuRows() {
+            $('tr.assembly-dhu-row').each(function() {
+                var $dhu = $(this);
+                var $prod = $dhu.prev('tr');
+                var $cells = $dhu.children('td');
+                var $inputs = $dhu.find('.assembly-dhu-hour-input');
+                if (!$inputs.length) return;
+
+                $cells.each(function() {
+                    if ($.trim($(this).text()) === '—') $(this).text('');
+                });
+
+                var dhuTotal = 0;
+                $inputs.each(function() { dhuTotal += parseFloat($(this).val()) || 0; });
+
+                var dayTotal = parseFloat(($prod.find('td.day-total').first().text() || '0').replace(/,/g, '')) || 0;
+                var eff = dayTotal > 0 ? (dhuTotal / dayTotal) * 100 : 0;
+
+                var first = 9 + $inputs.length;   // label + 8 cells + hour cells
+                $cells.eq(first).text(dhuTotal > 0 ? dhuTotal.toFixed(1) : '');                 // DHU Day Total
+                $cells.eq(first + 2).text(dhuTotal > 0 ? eff.toFixed(1) + '%' : '');           // Achieved Eff %
+            });
+        }
+
+        $(document).on('input change', '.assembly-dhu-hour-input', refreshAssemblyDhuRows);
+        $(function() { refreshAssemblyDhuRows(); });
+
         // ============================================================
-        // ASSEMBLY ROW DHU — Save each row's DHU to unit_id=998, hour_N
-        // Also supports LEAN_TOTAL (hour_8)
+        // ASSEMBLY ROW DHU — Per hour, per row
+        // Each row (SHIRT/MTM/TROUSER/etc) has its own DHU unit_id (900-906)
         // ============================================================
-        $(document).on('change', '.assembly-dhu-input', function() {
-            var hourCol = parseInt($(this).data('hour-col'));
-            if (!hourCol || hourCol < 1 || hourCol > 8) return;  // ← allow hour_8
+        $(document).on('change', '.assembly-dhu-hour-input', function() {
+            var dhuUnit = parseInt($(this).data('dhu-unit'));
+            var rowName = $(this).data('row-name');
+            if (!dhuUnit || dhuUnit < 900 || dhuUnit > 906) return;
             
-            var dhuVal = parseFloat($(this).val()) || 0;
             var hours = parseInt($('#workHours').val()) || 10;
-            
-            // Build complete DHU record (all 8 rows) — need to preserve others
             var data = { ttl_sam_pc: 0, unit_smv: 0, unit_carder: 0, plan_hours: 0, worked_hours: hours, epm: 13.2, profit: 0 };
             
-            // Read current values from all assembly-dhu-inputs on the page
+            // Initialize all hours to 0
             for (var i = 1; i <= 11; i++) data['hour_' + i] = 0;
-            $('.assembly-dhu-input').each(function() {
-                var hc = parseInt($(this).data('hour-col'));
-                if (hc >= 1 && hc <= 11) {
-                    data['hour_' + hc] = parseFloat($(this).val()) || 0;
+            
+            // Read all hour inputs for this row
+            $('.assembly-dhu-hour-input[data-dhu-unit="' + dhuUnit + '"]').each(function() {
+                var h = parseInt($(this).data('hour'));
+                if (h >= 1 && h <= 11) {
+                    data['hour_' + h] = parseFloat($(this).val()) || 0;
                 }
             });
             
@@ -1426,9 +1516,9 @@ if ($is_assembly_division) {
                 type: 'POST',
                 data: {
                     action: 'auto_save',
-                    date: $('#reportDate').val(),
-                    division: 7,  // Assembly division
-                    component: 998,
+                    date: PAGE_DATE,
+                    division: 7,
+                    component: dhuUnit,
                     data: JSON.stringify(data),
                     work_hours: hours,
                     is_assembly: '1'
@@ -1460,7 +1550,7 @@ if ($is_assembly_division) {
                 type: 'POST',
                 data: {
                     action: 'auto_save',
-                    date: $('#reportDate').val(),
+                    date: PAGE_DATE,
                     division: <?php echo $division_id; ?>,
                     component: 998,
                     data: JSON.stringify(data),
@@ -1822,7 +1912,7 @@ if ($is_assembly_division) {
                 totalRows++;
                 var component = row.data('component');
                 if (!component || component <= 0) return;
-                var date = $('#reportDate').val();
+                var date = PAGE_DATE;
                 var hours = $('#workHours').val();
                 var division = <?php echo $division_id; ?>;
                 var isAssembly = row.data('isassembly') == '1';
@@ -1843,6 +1933,8 @@ if ($is_assembly_division) {
                     data.ttl_sam_pc = parseFloat(row.find('input[data-field="ttl_sam_pc"]').val()) || 0;
                     data.unit_smv = parseFloat(row.find('input[data-field="unit_smv"]').val()) || 0;
                     data.unit_carder = parseFloat(row.find('input[data-field="unit_carder"]').val()) || 0;
+                    data.direct_on_roll = parseInt(row.find('input[data-field="direct_on_roll"]').val(), 10) || 0;
+                    data.direct_present = parseInt(row.find('input[data-field="direct_present"]').val(), 10) || 0;
                     data.plan_hours = parseFloat(row.find('input[data-field="plan_hours"]').val()) || 0;
                     data.worked_hours = parseFloat(row.find('input[data-field="worked_hours"]').val()) || hours;
                     data.epm = parseFloat(row.find('input[data-field="epm"]').val()) || 13.2;
@@ -1909,7 +2001,7 @@ if ($is_assembly_division) {
                 var compId = r.data('component');
                 if (!compId || compId <= 0) return;
                 
-                var date = $('#reportDate').val();
+                var date = PAGE_DATE;
                 var hours = $('#workHours').val();
                 var division = <?php echo $division_id; ?>;
                 var isAssembly = r.data('isassembly') == '1';
@@ -1930,6 +2022,8 @@ if ($is_assembly_division) {
                     data.ttl_sam_pc = parseFloat(r.find('input[data-field="ttl_sam_pc"]').val()) || 0;
                     data.unit_smv = parseFloat(r.find('input[data-field="unit_smv"]').val()) || 0;
                     data.unit_carder = parseFloat(r.find('input[data-field="unit_carder"]').val()) || 0;
+                    data.direct_on_roll = parseInt(r.find('input[data-field="direct_on_roll"]').val(), 10) || 0;
+                    data.direct_present = parseInt(r.find('input[data-field="direct_present"]').val(), 10) || 0;
                     data.plan_hours = parseFloat(r.find('input[data-field="plan_hours"]').val()) || 0;
                     data.worked_hours = parseFloat(r.find('input[data-field="worked_hours"]').val()) || hours;
                     data.epm = parseFloat(r.find('input[data-field="epm"]').val()) || 13.2;
@@ -1982,10 +2076,7 @@ if ($is_assembly_division) {
                 setTimeout(function() { updateSummaryRows(); }, 1000);
             }, 500);
 
-            // ============================================================
-            // FORCE Match Out profit = sum of component profits (on page load)
-            // Now uses the fixed sumComponentProfits() that excludes assembly rows
-            // ============================================================
+            // Force Match Out profit = sum of component profits (on page load)
             setTimeout(function() {
                 var matchOutRow = $('#matchOutRow');
                 if (matchOutRow.length > 0) {
@@ -1995,26 +2086,19 @@ if ($is_assembly_division) {
                 }
             }, 800);
 
-            // ============================================================
-            // FLUSH PENDING SAVES BEFORE LEAVING THE PAGE
-            // ============================================================
+            // Flush pending saves before leaving the page
             $(window).on('beforeunload', function() {
-                // Cancel all scheduled saves and fire them immediately
                 for (var key in saveTimeouts) {
                     if (saveTimeouts.hasOwnProperty(key)) {
                         clearTimeout(saveTimeouts[key]);
                     }
                 }
-                // Trigger a final save of all rows
                 flushAllSaves();
             });
 
-            // ============================================================
             // Save when user switches tabs or minimizes (mobile-friendly)
-            // ============================================================
             document.addEventListener('visibilitychange', function() {
                 if (document.visibilityState === 'hidden') {
-                    // Trigger a silent save of all rows
                     flushAllSaves();
                 }
             });

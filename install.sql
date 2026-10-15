@@ -103,6 +103,8 @@ CREATE TABLE IF NOT EXISTS production_reports (
     unit_smv DECIMAL(10,2) DEFAULT 0,
     day_forecast DECIMAL(10,2) DEFAULT 0,
     unit_carder INT DEFAULT 0,
+    direct_on_roll INT NOT NULL DEFAULT 0,
+    direct_present INT NOT NULL DEFAULT 0,
     plan_hours DECIMAL(5,2) DEFAULT 0,
     worked_hours DECIMAL(5,2) DEFAULT 0,
     available_minutes DECIMAL(10,2) DEFAULT 0,
