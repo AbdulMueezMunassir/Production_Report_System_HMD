@@ -710,7 +710,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         <div class="kpi-row" id="rep-kpis">
             <div class="kpi-card">
                 <div class="number"><?php echo $worked_days; ?></div>
-                <div class="label">Worked Days (Production Entered, Sundays Excluded)</div>
+                <div class="label">Worked Days </div>
             </div>
             <div class="kpi-card">
                 <div class="number"><?php echo $avg_eff; ?>%</div>

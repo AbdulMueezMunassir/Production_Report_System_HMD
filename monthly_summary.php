@@ -230,7 +230,15 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         .field { display:grid; gap:5px; color:var(--steel); font-size:12px; font-weight:600; }
         input,select,button,.button { min-height:38px; padding:8px 12px; border:1px solid var(--border); border-radius:8px; background:rgba(255,255,255,.72); color:var(--dark); font:600 13px 'Inter',sans-serif; }
         button,.button { display:inline-flex; align-items:center; justify-content:center; cursor:pointer; text-decoration:none; }
-        .primary { background:var(--primary); color:#fff; border-color:var(--primary); }
+        .filters input[type="date"],.filters select { min-width:150px; height:40px; border:1px solid rgba(33,115,70,.2); background-color:rgba(255,255,255,.78); box-shadow:0 2px 8px rgba(26,92,58,.04); transition:border-color .2s,box-shadow .2s,background-color .2s; }
+        .filters input[type="date"]:hover,.filters select:hover { border-color:rgba(33,115,70,.5); background-color:rgba(255,255,255,.95); }
+        .filters input[type="date"]:focus,.filters select:focus { outline:none; border-color:var(--primary); box-shadow:0 0 0 3px rgba(33,115,70,.13); }
+        .filters input[type="date"]::-webkit-calendar-picker-indicator { cursor:pointer; opacity:.78; filter:invert(34%) sepia(27%) saturate(1026%) hue-rotate(94deg) brightness(89%) contrast(88%); }
+        .filters select { appearance:none; -webkit-appearance:none; padding-right:38px; cursor:pointer; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23217346' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 12px center; }
+        .filters .primary,.filters .btn-apply { min-height:40px; padding:8px 20px; border:1px solid var(--primary); border-radius:8px; background:var(--primary); color:#fff; font-weight:700; font-size:14px; white-space:nowrap; transition:all .25s; }
+        .filters .primary:hover,.filters .btn-apply:hover { background:var(--primary-dark); border-color:var(--primary-dark); transform:translateY(-2px); box-shadow:0 4px 15px rgba(33,115,70,.3); }
+        .filters .btn-outline,.filters .button { min-height:40px; padding:8px 20px; border:1px solid var(--border); border-radius:8px; background:rgba(255,255,255,.5); color:var(--text-dark); font-weight:700; font-size:14px; font-family:'Inter',sans-serif; white-space:nowrap; transition:all .25s; }
+        .filters .btn-outline:hover,.filters .button:hover { border-color:var(--primary); color:var(--primary); background:rgba(33,115,70,.08); transform:translateY(-1px); }
         .month-card { margin:22px 0; overflow:hidden; border:1px solid var(--border); border-radius:16px; background:var(--glass); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); box-shadow:var(--shadow); }
         .month-title { padding:14px 18px; border-bottom:2px solid var(--primary); font-size:17px; font-weight:800; }
         .table-scroll { overflow:auto; max-height:72vh; }
@@ -264,6 +272,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             .month-title { padding:12px 14px; }
             th:first-child,td:first-child { min-width:135px; }
         }
+
     </style>
 </head>
 <body>
@@ -317,9 +326,9 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                     <?php endforeach; ?>
                 </select>
             </label>
-            <button class="primary" type="submit">Apply</button>
-            <button type="button" onclick="showToday()">Today</button>
-            <a class="button" href="reports.php?from=<?php echo urlencode($from_date); ?>&amp;to=<?php echo urlencode($to_date); ?>&amp;division=<?php echo urlencode($division_filter); ?>">Back to Reports</a>
+            <button class="primary btn-apply" type="submit">Apply</button>
+            <button type="button" class="btn-outline" onclick="showToday()">Today</button>
+            <a class="button btn-outline" href="reports.php?from=<?php echo urlencode($from_date); ?>&amp;to=<?php echo urlencode($to_date); ?>&amp;division=<?php echo urlencode($division_filter); ?>">Back to Reports</a>
         </form>
 
         <?php foreach ($month_data as $month_key => $month): ?>
