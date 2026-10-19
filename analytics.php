@@ -674,7 +674,12 @@ $chart_labels = range(1, $work_hours);
         <div class="logo">
             <img src="assets/images/logo.png" alt="H" class="logo-icon" style="object-fit:cover;">
             <span>HAMEEDIA — Analytics</span>
-            <a href="dashboard.php" style="margin-left:16px;padding:6px 16px;border:2px solid var(--glass-border);border-radius:10px;background:rgba(255,255,255,0.6);color:var(--text-dark);font-weight:700;font-size:13px;text-decoration:none;display:inline-flex;align-items:center;gap:6px;">← Back</a>
+            <a href="dashboard.php"
+   style="margin-left:16px;padding:6px 16px;border:2px solid var(--glass-border);border-radius:10px;background:#4caf50;color:var(--text-dark);font-weight:700;font-size:13px;text-decoration:none;display:inline-flex;align-items:center;gap:6px;transition:background 0.2s ease, transform 0.15s ease;"
+   onmouseover="this.style.background='#3d8b40'; this.style.transform='translateY(-1px)';"
+   onmouseout="this.style.background='#4caf50'; this.style.transform='translateY(0)';">
+   ← Back
+</a>
         </div>
         <div class="kiosk-nav">
             <button class="<?php echo $selected_division == 1 ? 'active' : ''; ?>" onclick="switchDivision(1)">👔 Shirt</button>

@@ -57,7 +57,9 @@ try {
 } catch (Exception $e) {
     error_log("Divisions query error: " . $e->getMessage());
 }
-if ($division_filter !== 'all' && !isset($division_display_names[(int)$division_filter])) {
+// Only these divisions are offered in the filter: 1 = Shirt, 2 = Trouser, 7 = Shirt Assembly
+$filter_division_ids = [1, 2, 7];
+if ($division_filter !== 'all' && !in_array((int)$division_filter, $filter_division_ids, true)) {
     $division_filter = 'all';
 }
 
@@ -298,7 +300,40 @@ foreach ($reports as $report) {
 }
 
 $avg_eff = $eff_weight_total > 0 ? round(($eff_weighted_sum / $eff_weight_total) * 100, 1) : 0;
-$worked_days = count($worked_dates);
+// Worked days: factory-level, so the number is the SAME for every division filter.
+// A date counts only when production was really entered (day_total > 0) in any division
+// and it is not a Sunday. Dates with no entry (poya / holidays / no data) are never counted.
+$worked_dates = [];
+try {
+    $wd_stmt = $conn->prepare(
+        "SELECT DISTINCT DATE(r.report_date) AS d
+         FROM production_reports r
+         WHERE DATE(r.report_date) BETWEEN ? AND ?
+           AND r.unit_id NOT IN (900, 901, 902, 903, 904, 905, 906, 996, 997, 998, 999)
+           AND r.day_total > 0"
+    );
+    $wd_stmt->execute([$from_date, $to_date]);
+    foreach ($wd_stmt->fetchAll(PDO::FETCH_COLUMN) as $wd) {
+        if ((int)date('w', strtotime($wd)) !== 0) {   // skip Sundays
+            $worked_dates[$wd] = true;
+        }
+    }
+} catch (Exception $e) {
+    error_log("Worked days query error: " . $e->getMessage());
+}
+// KPI card = worked days of the month of the "To" date (month-to-date).
+// It starts again from 0/1 on the 1st of every new month. Table keeps using the full range.
+$kpi_month_start = date('Y-m-01', strtotime($to_date));
+$kpi_from        = max($from_date, $kpi_month_start);
+$worked_days     = count(array_filter(array_keys($worked_dates), function ($d) use ($kpi_from, $to_date) {
+    return $d >= $kpi_from && $d <= $to_date;
+}));
+
+// Table shows only worked dates, so the dates in the table always match "Worked Days".
+// (Sundays and days with no production entered, e.g. poya days, are hidden.)
+$grouped_reports = array_filter($grouped_reports, function ($g) use ($worked_dates) {
+    return isset($worked_dates[date('Y-m-d', strtotime($g['date']))]);
+});
 $production_kpi_label = $division_filter === 'all'
     ? 'Assembly Production (Pcs)'
     : (($division_display_names[(int)$division_filter] ?? 'Selected Division') . ' Production (Pcs)');
@@ -691,6 +726,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                     <option value="all" <?php echo $division_filter === 'all' ? 'selected' : ''; ?>>All divisions</option>
                     <?php if (!empty($divisions)): ?>
                     <?php foreach ($divisions as $div): ?>
+                    <?php if (!in_array((int)$div['id'], $filter_division_ids, true)) continue; ?>
                     <option value="<?php echo $div['id']; ?>" <?php echo $division_filter == $div['id'] ? 'selected' : ''; ?>>
                         <?php echo htmlspecialchars($div['display_name']); ?>
                     </option>
@@ -710,7 +746,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         <div class="kpi-row" id="rep-kpis">
             <div class="kpi-card">
                 <div class="number"><?php echo $worked_days; ?></div>
-                <div class="label">Worked Days </div>
+                <div class="label">Worked Days · <?php echo date('M Y', strtotime($to_date)); ?></div>
             </div>
             <div class="kpi-card">
                 <div class="number"><?php echo $avg_eff; ?>%</div>
@@ -868,5 +904,6 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             window.location.reload();
         }, 3600000);
     </script>
+    <script src="assets/js/green-ui.js"></script>
 </body>
 </html>

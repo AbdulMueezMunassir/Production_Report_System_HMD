@@ -2105,5 +2105,6 @@ if ($is_assembly_division) {
             });
         });
     </script>
+    <script src="assets/js/green-ui.js"></script>
 </body>
 </html>

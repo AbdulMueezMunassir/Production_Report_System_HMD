@@ -8,7 +8,7 @@ function isLoggedIn() {
 
 function loginUser($username, $password) {
     $conn = getDB();
-    $stmt = $conn->prepare("SELECT id, username, password, full_name, role FROM users WHERE username = ?");
+    $stmt = $conn->prepare("SELECT id, username, password, full_name, role FROM users WHERE BINARY username = ?");
     $stmt->execute([$username]);
     $user = $stmt->fetch(PDO::FETCH_ASSOC);
     

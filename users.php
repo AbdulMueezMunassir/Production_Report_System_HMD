@@ -737,5 +737,6 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             if (e.target === this) closePasswordModal();
         });
     </script>
+    <script src="assets/js/green-ui.js"></script>
 </body>
 </html>

@@ -32,9 +32,9 @@ try {
     exit('Unable to load divisions for the monthly summary.');
 }
 
-$valid_divisions = array_map(function ($division) {
-    return (string)$division['id'];
-}, $divisions);
+// Only these divisions are offered in the filter: 1 = Shirt, 2 = Trouser, 7 = Shirt Assembly
+$filter_division_ids = [1, 2, 7];
+$valid_divisions = array_map('strval', $filter_division_ids);
 if ($division_filter !== 'all' && !in_array($division_filter, $valid_divisions, true)) {
     $division_filter = 'all';
 }
@@ -132,8 +132,10 @@ foreach ($reports as $report) {
     $date = date('Y-m-d', strtotime($report['report_date']));
     $month_key = substr($date, 0, 7);
     $product_key = strtoupper(trim($report['product_key']));
+        // Worked dates are factory-level (any product, not only the selected division),
+    // so the day columns are the same for every division filter. Sundays and
+    // days with no production entered (poya / holidays) are never shown.
     if (!isset($product_rows[$product_key])
-        || ($selected_category !== null && $product_key !== $selected_category)
         || (int)date('w', strtotime($date)) === 0
         || (float)($report['day_total'] ?? 0) <= 0) {
         continue;
@@ -230,11 +232,11 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         .field { display:grid; gap:5px; color:var(--steel); font-size:12px; font-weight:600; }
         input,select,button,.button { min-height:38px; padding:8px 12px; border:1px solid var(--border); border-radius:8px; background:rgba(255,255,255,.72); color:var(--dark); font:600 13px 'Inter',sans-serif; }
         button,.button { display:inline-flex; align-items:center; justify-content:center; cursor:pointer; text-decoration:none; }
-        .filters input[type="date"],.filters select { min-width:150px; height:40px; border:1px solid rgba(33,115,70,.2); background-color:rgba(255,255,255,.78); box-shadow:0 2px 8px rgba(26,92,58,.04); transition:border-color .2s,box-shadow .2s,background-color .2s; }
-        .filters input[type="date"]:hover,.filters select:hover { border-color:rgba(33,115,70,.5); background-color:rgba(255,255,255,.95); }
-        .filters input[type="date"]:focus,.filters select:focus { outline:none; border-color:var(--primary); box-shadow:0 0 0 3px rgba(33,115,70,.13); }
-        .filters input[type="date"]::-webkit-calendar-picker-indicator { cursor:pointer; opacity:.78; filter:invert(34%) sepia(27%) saturate(1026%) hue-rotate(94deg) brightness(89%) contrast(88%); }
-        .filters select { appearance:none; -webkit-appearance:none; padding-right:38px; cursor:pointer; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23217346' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 12px center; }
+        .filters input[type="date"],.filters select { min-width:150px; height:40px; padding:8px 12px; border:1px solid rgba(255,255,255,.2); border-radius:8px; background:rgba(255,255,255,.7); color:var(--dark); font:500 14px 'Inter',sans-serif; transition:border-color .2s,background-color .2s; }
+        .filters input[type="date"]:hover,.filters select:hover { background-color:rgba(255,255,255,.85); }
+        .filters input[type="date"]:focus,.filters select:focus { outline:none; border-color:var(--primary); }
+        .filters input[type="date"]::-webkit-calendar-picker-indicator { cursor:pointer; }
+        .filters select { cursor:pointer; }
         .filters .primary,.filters .btn-apply { min-height:40px; padding:8px 20px; border:1px solid var(--primary); border-radius:8px; background:var(--primary); color:#fff; font-weight:700; font-size:14px; white-space:nowrap; transition:all .25s; }
         .filters .primary:hover,.filters .btn-apply:hover { background:var(--primary-dark); border-color:var(--primary-dark); transform:translateY(-2px); box-shadow:0 4px 15px rgba(33,115,70,.3); }
         .filters .btn-outline,.filters .button { min-height:40px; padding:8px 20px; border:1px solid var(--border); border-radius:8px; background:rgba(255,255,255,.5); color:var(--text-dark); font-weight:700; font-size:14px; font-family:'Inter',sans-serif; white-space:nowrap; transition:all .25s; }
@@ -320,6 +322,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                 <select id="division" name="division">
                     <option value="all" <?php echo $division_filter === 'all' ? 'selected' : ''; ?>>All divisions</option>
                     <?php foreach ($divisions as $division): ?>
+                    <?php if (!in_array((int)$division['id'], $filter_division_ids, true)) continue; ?>
                     <option value="<?php echo (int)$division['id']; ?>" <?php echo $division_filter === (string)$division['id'] ? 'selected' : ''; ?>>
                         <?php echo htmlspecialchars($division_names[(int)$division['id']]); ?>
                     </option>
@@ -459,5 +462,6 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             document.querySelector('.filters').submit();
         }
     </script>
+    <script src="assets/js/green-ui.js"></script>
 </body>
 </html>

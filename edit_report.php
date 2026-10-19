@@ -138,5 +138,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
         </form>
     </div>
+    <script src="assets/js/green-ui.js"></script>
 </body>
 </html>
