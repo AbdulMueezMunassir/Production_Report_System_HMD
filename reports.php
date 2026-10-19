@@ -20,14 +20,18 @@ if (session_status() === PHP_SESSION_NONE) {
 // ============================================================
 // FILTER HANDLING
 // ============================================================
-$from_date       = isset($_GET['from']) && !empty($_GET['from']) ? $_GET['from'] : date('Y-m-d');
-$to_date         = isset($_GET['to']) && !empty($_GET['to']) ? $_GET['to'] : date('Y-m-d');
-$division_filter = isset($_GET['division']) ? $_GET['division'] : 'all';
-
-// Save to session so other pages can pick it up if needed
-$_SESSION['report_from']     = $from_date;
-$_SESSION['report_to']       = $to_date;
-$_SESSION['report_division'] = $division_filter;
+$today           = date('Y-m-d');
+$month_start     = date('Y-m-01');
+$from_input       = $_GET['from'] ?? $month_start;
+$to_input         = $_GET['to'] ?? $today;
+$from_date       = normalizeReportDate(is_string($from_input) && $from_input !== '' ? $from_input : $month_start);
+$to_date         = normalizeReportDate(is_string($to_input) && $to_input !== '' ? $to_input : $today);
+if ($from_date > $to_date) {
+    $from_date = $to_date;
+}
+$division_filter = isset($_GET['division']) && is_string($_GET['division']) && $_GET['division'] !== ''
+    ? $_GET['division']
+    : 'all';
 
 // ============================================================
 // LOAD DIVISIONS
@@ -43,7 +47,7 @@ try {
 
     foreach ($results as $div) {
         $is_assembly = (isset($div['type']) && $div['type'] === 'assembly');
-        $display_name = $is_assembly ? 'Assembly' : $div['name'];
+        $display_name = $is_assembly ? 'Assembly - ' . $div['name'] : $div['name'];
 
         $division_display_names[$div['id']] = $display_name;
         $div['display_name'] = $display_name;
@@ -58,6 +62,14 @@ try {
 } catch (Exception $e) {
     error_log("Divisions query error: " . $e->getMessage());
 }
+if ($division_filter !== 'all' && !isset($division_display_names[(int)$division_filter])) {
+    $division_filter = 'all';
+}
+
+// Save to session so other pages can pick it up if needed
+$_SESSION['report_from']     = $from_date;
+$_SESSION['report_to']       = $to_date;
+$_SESSION['report_division'] = $division_filter;
 
 // ============================================================
 // LOAD REPORT ROWS (components)
@@ -86,7 +98,7 @@ $sql = "SELECT
             r.hour_6, r.hour_7, r.hour_8, r.hour_9, r.hour_10, r.hour_11
         FROM production_reports r 
         WHERE DATE(r.report_date) BETWEEN ? AND ?
-        AND r.unit_id NOT IN (996, 997, 998, 999)";
+        AND r.unit_id NOT IN (900, 901, 902, 903, 904, 905, 906, 996, 997, 998, 999)";
 
 $params = [$from_date, $to_date];
 
@@ -161,7 +173,6 @@ $initGroup = function ($date, $division_id, $division_name) {
         'total_pcs'         => 0,
         'total_ern'         => 0,
         'total_eff_sum'     => 0,   // sum of eff (for weighting)
-        'total_day_for_eff' => 0,   // day_total used as weight
         'total_profit'      => 0,
         'eff_count'         => 0,
     ];
@@ -180,10 +191,10 @@ foreach ($reports as $report) {
     $grouped_reports[$key]['components'][] = $report;
 
     $dayTotal = (float)($report['day_total'] ?? 0);
+    $grouped_reports[$key]['total_profit'] += (float)($report['profit'] ?? 0);
     if ($dayTotal > 0) {
         $grouped_reports[$key]['total_pcs']     += $dayTotal;
         $grouped_reports[$key]['total_ern']     += (float)($report['ern_minutes'] ?? 0);
-        $grouped_reports[$key]['total_profit']  += (float)($report['profit'] ?? 0);
         $grouped_reports[$key]['eff_count']++;
 
         $effVal = (float)($report['acvd_eff'] ?? 0);
@@ -192,7 +203,6 @@ foreach ($reports as $report) {
             $effVal *= 100;
         }
         $grouped_reports[$key]['total_eff_sum']     += $effVal;
-        $grouped_reports[$key]['total_day_for_eff'] += $dayTotal;
     }
 }
 
@@ -245,28 +255,58 @@ unset($group);
 // ============================================================
 // KPI CALCULATIONS
 // ============================================================
-$total_groups        = count($grouped_reports);           // date-division groups
-$total_components    = 0;
-$total_ern_global    = 0;
 $total_prod_global   = 0;
 $total_profit_global = 0;
 $eff_weighted_sum    = 0;
 $eff_weight_total    = 0;
+$worked_dates        = [];
+$production_division_ids = $division_filter === 'all'
+    ? $assembly_division_ids
+    : [(int)$division_filter];
 
 foreach ($grouped_reports as $r) {
-    $total_components += $r['component_count'];
-    $total_prod_global += $r['total_pcs'];
-    $total_ern_global += $r['total_ern'];
     $total_profit_global += $r['total_profit'];
+}
+foreach ($reports as $report) {
+    $day_total = (float)($report['day_total'] ?? 0);
+    $division_id = (int)$report['devition_id'];
+    if ($day_total <= 0) {
+        continue;
+    }
 
-    // Weighted average: weight by day_total
-    if ($r['total_day_for_eff'] > 0) {
-        $eff_weighted_sum += $r['total_eff_sum'];
-        $eff_weight_total += $r['eff_count'];
+    $report_date = date('Y-m-d', strtotime($report['report_date']));
+    if ((int)date('w', strtotime($report_date)) !== 0) {
+        $worked_dates[$report_date] = true;
+    }
+
+    if (in_array($division_id, $production_division_ids, true)) {
+        $total_prod_global += $day_total;
+    }
+    $efficiency = (float)($report['acvd_eff'] ?? 0);
+    if ($efficiency > 1) {
+        $efficiency /= 100;
+    }
+    $plan_hours = (float)($report['plan_hours'] ?? 0);
+    $worked_hours = (float)($report['worked_hours'] ?? 0);
+    $available_minutes = (float)($report['available_minutes'] ?? 0);
+    $actual_available_minutes = ($plan_hours > 0 && $worked_hours > 0)
+        ? ($available_minutes / $plan_hours) * $worked_hours
+        : 0;
+
+    if ($actual_available_minutes > 0) {
+        $eff_weighted_sum += $efficiency * $actual_available_minutes;
+        $eff_weight_total += $actual_available_minutes;
+    } elseif ($efficiency > 0) {
+        $eff_weighted_sum += $efficiency * $day_total;
+        $eff_weight_total += $day_total;
     }
 }
 
-$avg_eff = $eff_weight_total > 0 ? round($eff_weighted_sum / $eff_weight_total, 1) : 0;
+$avg_eff = $eff_weight_total > 0 ? round(($eff_weighted_sum / $eff_weight_total) * 100, 1) : 0;
+$worked_days = count($worked_dates);
+$production_kpi_label = $division_filter === 'all'
+    ? 'Assembly Production (Pcs)'
+    : (($division_display_names[(int)$division_filter] ?? 'Selected Division') . ' Production (Pcs)');
 
 $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
 ?>
@@ -348,6 +388,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         .topbar .logo-mark .logo-icon { background: var(--primary); color: #fff; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border-radius: 10px; font-weight: 700; font-size: 18px; }
         .topbar .logo-mark .logo-text { letter-spacing: -0.5px; }
         .topbar .logo-mark .logo-text span { color: var(--primary); }
+        .topbar .logo-mark .logo-text { color: #111; font: 900 23px "Times New Roman", Times, serif; letter-spacing: .4px; }
         .topnav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
         .topnav a { color: var(--steel); text-decoration: none; font-size: 14px; font-weight: 600; padding: 7px 16px; border-radius: 10px; transition: all 0.3s; background: transparent; }
         .topnav a:hover { color: var(--primary); background: rgba(33, 115, 70, 0.08); }
@@ -526,6 +567,30 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         }
 
         .filter-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .filter-actions a.btn-outline { display: inline-block; text-decoration: none; }
+        .btn-apply, .btn-outline, .btn-view-action, .back-button, .logout {
+            background: #e3f3e6;
+            border: 1px solid #b8d9bf;
+            color: #183b27;
+            transition: background .18s ease, border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+        }
+        .btn-apply:hover, .btn-outline:hover, .btn-view-action:hover, .back-button:hover, .logout:hover {
+            background: #cfead4;
+            border-color: #82b990;
+            color: #123e25;
+            box-shadow: 0 4px 12px rgba(33, 115, 70, .15);
+            transform: translateY(-1px);
+        }
+        .filter-row input[type="date"], .filter-row select { color-scheme: light; border: 1px solid #b8d9bf; background-color: #f3faf4; }
+        .filter-row input[type="date"]::-webkit-calendar-picker-indicator { padding: 4px; border-radius: 5px; cursor: pointer; filter: invert(34%) sepia(17%) saturate(1475%) hue-rotate(91deg) brightness(90%); }
+        .filter-row input[type="date"]:focus, .filter-row select:focus { outline: 3px solid rgba(33,115,70,.2); border-color: #69a97a; }
+        .filter-row select {
+            appearance: none;
+            padding-right: 36px;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23217346' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+        }
 
         .component-count { font-size: 11px; color: var(--steel); font-weight: 500; }
         .summary-badges { display: flex; gap: 4px; flex-wrap: wrap; }
@@ -642,15 +707,15 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                 <button type="submit" class="btn-apply">Apply</button>
                 <button type="button" class="btn-outline" onclick="viewAllRecords()">View All</button>
                 <button type="button" class="btn-outline" onclick="viewToday()">Today</button>
-                
+                <a class="btn-outline" href="monthly_summary.php?from=<?php echo urlencode($from_date); ?>&amp;to=<?php echo urlencode($to_date); ?>&amp;division=<?php echo urlencode($division_filter); ?>">Summary Report</a>
             </div>
         </form>
 
         <!-- KPIs -->
         <div class="kpi-row" id="rep-kpis">
             <div class="kpi-card">
-                <div class="number"><?php echo $total_groups; ?></div>
-                <div class="label">Report Groups</div>
+                <div class="number"><?php echo $worked_days; ?></div>
+                <div class="label">Worked Days (Production Entered, Sundays Excluded)</div>
             </div>
             <div class="kpi-card">
                 <div class="number"><?php echo $avg_eff; ?>%</div>
@@ -658,7 +723,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             </div>
             <div class="kpi-card">
                 <div class="number"><?php echo number_format($total_prod_global, 0); ?></div>
-                <div class="label">Total Production (Pcs)</div>
+                <div class="label"><?php echo htmlspecialchars($production_kpi_label); ?></div>
             </div>
             <div class="kpi-card">
                 <div class="number <?php echo $total_profit_global >= 0 ? 'profit-pos' : 'profit-neg'; ?>">
@@ -756,6 +821,10 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
     </div>
 
     <script>
+        function localToday() {
+            var now = new Date();
+            return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+        }
         function updateClock() {
             const now = new Date();
             let hours = now.getHours();
@@ -768,7 +837,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         setInterval(updateClock, 60000);
 
         function viewAllRecords() {
-            var today = new Date().toISOString().split('T')[0];
+            var today = localToday();
             document.getElementById('rep-from').value = '2020-01-01';
             document.getElementById('rep-to').value = today;
             document.getElementById('rep-division').value = 'all';
@@ -776,7 +845,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         }
 
         function viewToday() {
-            var today = new Date().toISOString().split('T')[0];
+            var today = localToday();
             document.getElementById('rep-from').value = today;
             document.getElementById('rep-to').value = today;
             document.getElementById('rep-division').value = 'all';

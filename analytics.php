@@ -143,27 +143,6 @@ function calculateDhuRateHours($defect_hours, $production_hours, $work_hours) {
     return $rates;
 }
 
-function applyAssemblyDhuEfficiency($column, $defect_hours, $work_hours) {
-    $defect_total = 0;
-    $production_total = 0;
-    $column['hour_efficiency_numerator'] = [];
-    $column['hour_efficiency_denominator'] = [];
-    for ($h = 1; $h <= $work_hours; $h++) {
-        $pcs = (float)($column['hours'][$h - 1] ?? 0);
-        $defects = (float)($defect_hours[$h] ?? 0);
-        $denominator = $pcs + $defects;
-        $column['hour_eff'][$h - 1] = $denominator > 0 ? ($defects / $denominator) * 100 : 0;
-        $column['hour_efficiency_numerator'][$h - 1] = $defects;
-        $column['hour_efficiency_denominator'][$h - 1] = $denominator;
-        $defect_total += $defects;
-        $production_total += $pcs;
-    }
-    $column['eff'] = calculateDhuRate($defect_total, $production_total);
-    $column['efficiency_numerator'] = $defect_total;
-    $column['efficiency_denominator'] = $defect_total + $production_total;
-    return $column;
-}
-
 function calculateAbsenteeism($direct_on_roll, $direct_present) {
     $direct_on_roll = (float)$direct_on_roll;
     if ($direct_on_roll <= 0) return 0;
@@ -198,17 +177,21 @@ function buildColumn($name, $data, $division_type, $total_assemble_carder = null
     $hourly_carder = $division_type === 'assembly'
         ? ($total_assemble_carder !== null ? $total_assemble_carder : $unit_carder)
         : $unit_carder;
+    $hourly_target = $hourly_sam > 0
+        ? ($hourly_carder * 60) / $hourly_sam
+        : 0;
     for ($h = 0; $h < $work_hours; $h++) {
         $hour_efficiency_numerator[$h] = $hours[$h] * $hourly_sam;
         $hour_efficiency_denominator[$h] = $hourly_carder * 60;
-        $hour_eff[$h] = $hour_efficiency_denominator[$h] > 0
-            ? ($hour_efficiency_numerator[$h] / $hour_efficiency_denominator[$h]) * 100
+        $hour_eff[$h] = $hourly_target > 0
+            ? ($hours[$h] / $hourly_target) * 100
             : 0;
     }
     $dhu_val = ($dhu_override !== null) ? $dhu_override : computeDHU($data);
     return [
         'name' => $name, 'pcs' => $day_total, 'eff' => $acvd_eff * 100,
         'efficiency_numerator' => $ern_minutes, 'efficiency_denominator' => $daily_available_minutes,
+        'sam_efficiency_numerator' => $ern_minutes, 'sam_efficiency_denominator' => $daily_available_minutes,
         'carder' => $unit_carder, 'direct_on_roll' => $direct_on_roll,
         'direct_present' => $direct_present, 'dhu' => $dhu_val,
         'hours' => $hours, 'hour_eff' => $hour_eff,
@@ -222,7 +205,8 @@ function buildColumn($name, $data, $division_type, $total_assemble_carder = null
 function emptyColumn($name, $type = 'component', $work_hours = 10) {
     return [
         'name' => $name, 'pcs' => 0, 'eff' => 0, 'efficiency_numerator' => 0,
-        'efficiency_denominator' => 0, 'carder' => 0, 'direct_on_roll' => 0,
+        'efficiency_denominator' => 0, 'sam_efficiency_numerator' => 0,
+        'sam_efficiency_denominator' => 0, 'carder' => 0, 'direct_on_roll' => 0,
         'direct_present' => 0, 'dhu' => 0, 'hours' => array_fill(0, $work_hours, 0),
         'hour_eff' => array_fill(0, $work_hours, 0),
         'hour_efficiency_numerator' => array_fill(0, $work_hours, 0),
@@ -374,13 +358,20 @@ function computeCharts($columns, $work_hours, $dhu_override_hours = null) {
 function computeStats($columns) {
     $assembly_columns = array_filter($columns, function($col) { return $col['type'] === 'assembly'; });
     $match_out_columns = array_filter($columns, function($col) { return $col['type'] === 'match_out'; });
-    if (!empty($assembly_columns)) {
-        $production_columns = $assembly_columns;
-    } elseif (!empty($match_out_columns)) {
-        $production_columns = $match_out_columns;
-    } else {
-        $production_columns = array_filter($columns, function($col) { return $col['type'] === 'component'; });
+    $component_columns = array_filter($columns, function($col) { return $col['type'] === 'component'; });
+    $production_columns = array_filter($assembly_columns, function($col) {
+        return $col['pcs'] > 0 || $col['carder'] > 0;
+    });
+    if (empty($production_columns)) {
+        $production_columns = array_filter($match_out_columns, function($col) { return $col['pcs'] > 0; });
     }
+    $sum_production_columns = !empty($production_columns);
+    if (!$sum_production_columns) {
+        $production_columns = array_filter($component_columns, function($col) {
+            return $col['pcs'] > 0 || $col['carder'] > 0;
+        });
+    }
+    $production_column_count = count($production_columns);
     $total_pcs = 0;
     $efficiency_numerator = 0;
     $efficiency_denominator = 0;
@@ -388,8 +379,11 @@ function computeStats($columns) {
     $dhu_count = 0;
     foreach ($production_columns as $col) {
         $total_pcs += (float)$col['pcs'];
-        $efficiency_numerator += (float)($col['efficiency_numerator'] ?? 0);
-        $efficiency_denominator += (float)($col['efficiency_denominator'] ?? 0);
+        $efficiency_numerator += (float)($col['sam_efficiency_numerator'] ?? 0);
+        $efficiency_denominator += (float)($col['sam_efficiency_denominator'] ?? 0);
+    }
+    if (!$sum_production_columns && $production_column_count > 0) {
+        $total_pcs /= $production_column_count;
     }
     foreach ($columns as $col) {
         if ($col['dhu'] > 0) { $dhu_sum += $col['dhu']; $dhu_count++; }
@@ -425,24 +419,6 @@ if ($trouser_main_assembly['pcs'] <= 0 && $trouser_main_dhu_eff['total'] <= 0) {
 $coat_main_dhu_rates = calculateDhuRateHours($assembly_row_dhu_hours['COAT'], $coat_main[0]['hours'] ?? [], $work_hours);
 $coat_mtm_dhu_rates = calculateDhuRateHours($assembly_row_dhu_hours['COAT MTM'], $coat_mtm[0]['hours'] ?? [], $work_hours);
 $knit_dhu_rates = calculateDhuRateHours($assembly_row_dhu_hours['KNIT'], $knit_col['hours'] ?? [], $work_hours);
-
-$shirt_main_index = count($shirt_main) - 1;
-$trouser_main_index = count($trouser_main) - 1;
-$shirt_main[$shirt_main_index] = applyAssemblyDhuEfficiency($shirt_main[$shirt_main_index], $assembly_row_dhu_hours['SHIRT'], $work_hours);
-$trouser_main[$trouser_main_index] = applyAssemblyDhuEfficiency($trouser_main[$trouser_main_index], $assembly_row_dhu_hours['TROUSER'], $work_hours);
-$shirt_mtm[0] = applyAssemblyDhuEfficiency($shirt_mtm[0], $assembly_row_dhu_hours['SHIRT MTM'], $work_hours);
-$trouser_mtm[0] = applyAssemblyDhuEfficiency($trouser_mtm[0], $assembly_row_dhu_hours['TROUSER MTM'], $work_hours);
-$coat_main[0] = applyAssemblyDhuEfficiency($coat_main[0], $assembly_row_dhu_hours['COAT'], $work_hours);
-$coat_mtm[0] = applyAssemblyDhuEfficiency($coat_mtm[0], $assembly_row_dhu_hours['COAT MTM'], $work_hours);
-$knit_col = applyAssemblyDhuEfficiency($knit_col, $assembly_row_dhu_hours['KNIT'], $work_hours);
-foreach ($assembly_main as $index => $col) {
-    $row_name = strtoupper(trim($col['name']));
-    $assembly_main[$index] = applyAssemblyDhuEfficiency(
-        $col,
-        $assembly_row_dhu_hours[$row_name] ?? [],
-        $work_hours
-    );
-}
 
 // Pre-compute assembly-wide hourly DHU and the weighted daily rate.
 $assembly_total_defects = 0;
@@ -555,6 +531,7 @@ $chart_labels = range(1, $work_hours);
             box-shadow: 0 4px 20px rgba(0,0,0,0.05);
         }
         .kiosk-header .logo { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 18px; color: var(--primary-dark); }
+        .kiosk-header .logo > span { color: #111; font: 900 21px "Times New Roman", Times, serif; letter-spacing: .3px; }
         .kiosk-header .logo a { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; }
         .kiosk-header .logo-icon { width: 40px; height: 40px; border-radius: 10px; object-fit: cover; }
         .kiosk-nav { display: flex; gap: 8px; align-items: center; }
@@ -728,7 +705,7 @@ $chart_labels = range(1, $work_hours);
             
             <div class="stats-row">
                 <div class="stat-card"><div class="number"><?php echo number_format($stats_shirt_main['total_pcs']); ?></div><div class="label">Total Production</div></div>
-                <div class="stat-card"><div class="number eff"><?php echo $stats_shirt_main['avg_eff']; ?>%</div><div class="label">Avg Efficiency</div></div>
+                <div class="stat-card"><div class="number eff"><?php echo $stats_shirt_main['avg_eff']; ?>%</div><div class="label">Avg SAM Efficiency</div></div>
                 <div class="stat-card"><div class="number dhu"><?php echo number_format($shirt_main_dhu_eff['eff'], 1); ?>%</div><div class="label">Avg DHU</div></div>
                 <div class="stat-card"><div class="number"><?php echo $work_hours; ?></div><div class="label">Work Hours</div></div>
             </div>
@@ -801,7 +778,7 @@ $chart_labels = range(1, $work_hours);
             
             <div class="stats-row">
                 <div class="stat-card"><div class="number"><?php echo number_format($stats_shirt_mtm['total_pcs']); ?></div><div class="label">Total Production</div></div>
-                <div class="stat-card"><div class="number eff"><?php echo $stats_shirt_mtm['avg_eff']; ?>%</div><div class="label">Avg Efficiency</div></div>
+                <div class="stat-card"><div class="number eff"><?php echo $stats_shirt_mtm['avg_eff']; ?>%</div><div class="label">Avg SAM Efficiency</div></div>
                 <div class="stat-card"><div class="number dhu"><?php echo number_format($shirt_mtm_dhu_avg, 1); ?>%</div><div class="label">Avg DHU</div></div>
                 <div class="stat-card dhu-eff-card"><div class="number dhu"><?php echo number_format($shirt_mtm_dhu_eff['total'], 0); ?></div><div class="label">Total Defects</div></div>
                 <div class="stat-card"><div class="number"><?php echo $work_hours; ?></div><div class="label">Work Hours</div></div>
@@ -886,7 +863,7 @@ $chart_labels = range(1, $work_hours);
             
             <div class="stats-row">
                 <div class="stat-card"><div class="number"><?php echo number_format($stats_trouser_main['total_pcs']); ?></div><div class="label">Total Production</div></div>
-                <div class="stat-card"><div class="number eff"><?php echo $stats_trouser_main['avg_eff']; ?>%</div><div class="label">Avg Efficiency</div></div>
+                <div class="stat-card"><div class="number eff"><?php echo $stats_trouser_main['avg_eff']; ?>%</div><div class="label">Avg SAM Efficiency</div></div>
                 <div class="stat-card"><div class="number dhu"><?php echo number_format($trouser_main_dhu_eff['eff'], 1); ?>%</div><div class="label">Avg DHU</div></div>
                 <div class="stat-card"><div class="number"><?php echo $work_hours; ?></div><div class="label">Work Hours</div></div>
             </div>
@@ -956,7 +933,7 @@ $chart_labels = range(1, $work_hours);
             
             <div class="stats-row">
                 <div class="stat-card"><div class="number"><?php echo number_format($stats_trouser_mtm['total_pcs']); ?></div><div class="label">Total Production</div></div>
-                <div class="stat-card"><div class="number eff"><?php echo $stats_trouser_mtm['avg_eff']; ?>%</div><div class="label">Avg Efficiency</div></div>
+                <div class="stat-card"><div class="number eff"><?php echo $stats_trouser_mtm['avg_eff']; ?>%</div><div class="label">Avg SAM Efficiency</div></div>
                 <div class="stat-card"><div class="number dhu"><?php echo number_format($trouser_mtm_dhu_avg, 1); ?>%</div><div class="label">Avg DHU</div></div>
                 <div class="stat-card dhu-eff-card"><div class="number dhu"><?php echo number_format($trouser_mtm_dhu_eff['total'], 0); ?></div><div class="label">Total Defects</div></div>
                 <div class="stat-card"><div class="number"><?php echo $work_hours; ?></div><div class="label">Work Hours</div></div>
@@ -1038,7 +1015,7 @@ $chart_labels = range(1, $work_hours);
             
             <div class="stats-row">
                 <div class="stat-card"><div class="number"><?php echo number_format($stats_coat_main['total_pcs']); ?></div><div class="label">Total Production</div></div>
-                <div class="stat-card"><div class="number eff"><?php echo $stats_coat_main['avg_eff']; ?>%</div><div class="label">Avg Efficiency</div></div>
+                <div class="stat-card"><div class="number eff"><?php echo $stats_coat_main['avg_eff']; ?>%</div><div class="label">Avg SAM Efficiency</div></div>
                 <div class="stat-card"><div class="number dhu"><?php echo number_format($coat_main_dhu_avg, 1); ?>%</div><div class="label">Avg DHU</div></div>
                 <div class="stat-card dhu-eff-card"><div class="number dhu"><?php echo number_format($coat_main_dhu_eff['total'], 0); ?></div><div class="label">Total Defects</div></div>
                 <div class="stat-card"><div class="number"><?php echo $work_hours; ?></div><div class="label">Work Hours</div></div>
@@ -1106,7 +1083,7 @@ $chart_labels = range(1, $work_hours);
             
             <div class="stats-row">
                 <div class="stat-card"><div class="number"><?php echo number_format($stats_coat_mtm['total_pcs']); ?></div><div class="label">Total Production</div></div>
-                <div class="stat-card"><div class="number eff"><?php echo $stats_coat_mtm['avg_eff']; ?>%</div><div class="label">Avg Efficiency</div></div>
+                <div class="stat-card"><div class="number eff"><?php echo $stats_coat_mtm['avg_eff']; ?>%</div><div class="label">Avg SAM Efficiency</div></div>
                 <div class="stat-card"><div class="number dhu"><?php echo number_format($coat_mtm_dhu_avg, 1); ?>%</div><div class="label">Avg DHU</div></div>
                 <div class="stat-card dhu-eff-card"><div class="number dhu"><?php echo number_format($coat_mtm_dhu_eff['total'], 0); ?></div><div class="label">Total Defects</div></div>
                 <div class="stat-card"><div class="number"><?php echo $work_hours; ?></div><div class="label">Work Hours</div></div>
@@ -1174,7 +1151,7 @@ $chart_labels = range(1, $work_hours);
             
             <div class="stats-row">
                 <div class="stat-card"><div class="number"><?php echo number_format($knit_stats['total_pcs']); ?></div><div class="label">Total Production</div></div>
-                <div class="stat-card"><div class="number eff"><?php echo $knit_stats['avg_eff']; ?>%</div><div class="label">Avg Efficiency</div></div>
+                <div class="stat-card"><div class="number eff"><?php echo $knit_stats['avg_eff']; ?>%</div><div class="label">Avg SAM Efficiency</div></div>
                 <div class="stat-card"><div class="number dhu"><?php echo number_format($knit_dhu_avg, 1); ?>%</div><div class="label">Avg DHU</div></div>
                 <div class="stat-card dhu-eff-card"><div class="number dhu"><?php echo number_format($knit_dhu_eff['total'], 0); ?></div><div class="label">Total Defects</div></div>
                 <div class="stat-card"><div class="number"><?php echo $work_hours; ?></div><div class="label">Work Hours</div></div>
@@ -1231,7 +1208,7 @@ $chart_labels = range(1, $work_hours);
             <div class="screen-title">🏭 ASSEMBLY</div>
             <div class="stats-row">
                 <div class="stat-card"><div class="number"><?php echo number_format($stats_assembly['total_pcs']); ?></div><div class="label">Total Production</div></div>
-                <div class="stat-card"><div class="number eff"><?php echo $stats_assembly['avg_eff']; ?>%</div><div class="label">Avg Efficiency</div></div>
+                <div class="stat-card"><div class="number eff"><?php echo $stats_assembly['avg_eff']; ?>%</div><div class="label">Avg SAM Efficiency</div></div>
                 <!-- BLOCK 4: Avg DHU stat card (per-hour average across all 7 rows) -->
                 <div class="stat-card"><div class="number dhu"><?php echo number_format($assembly_avg_dhu, 1); ?>%</div><div class="label">Avg DHU</div></div>
                 <div class="stat-card dhu-eff-card"><div class="number dhu"><?php echo number_format($assembly_dhu_eff['total'], 0); ?></div><div class="label">Total Defects</div></div>

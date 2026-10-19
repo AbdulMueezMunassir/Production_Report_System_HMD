@@ -199,6 +199,9 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         }
         .topbar .logo-mark .logo-text {
             letter-spacing: -0.5px;
+            color: #111;
+            font: 900 23px "Times New Roman", Times, serif;
+            letter-spacing: .4px;
         }
         .topbar .logo-mark .logo-text span {
             color: var(--primary);
