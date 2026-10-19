@@ -1104,19 +1104,9 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         }
     </script>
     <script>
-// Silent auto-refresh every 15 minutes — paused while user interacts
-let refreshTimer = setTimeout(function() {
-    window.location.reload();
-}, 900000);
-
-['mousedown', 'wheel', 'touchstart', 'keydown'].forEach(evt => {
-    window.addEventListener(evt, () => {
-        clearTimeout(refreshTimer);
-        refreshTimer = setTimeout(function() {
+        setTimeout(function() {
             window.location.reload();
-        }, 900000);
-    }, { passive: true });
-});
-</script>
+        }, 3600000);
+    </script>
 </body>
 </html>

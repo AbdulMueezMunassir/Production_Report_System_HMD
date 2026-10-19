@@ -198,25 +198,40 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
         * { box-sizing: border-box; }
-        :root { --primary: #217346; --dark: #1a2332; --steel: #6b7a8f; --glass: rgba(255,255,255,.18); --border: rgba(255,255,255,.35); --bad: #dc3545; }
-        body { margin: 0; min-height: 100vh; color: var(--dark); font: 14px Inter, sans-serif; background: linear-gradient(135deg,#e8f5e9 0%,#c8e6c9 50%,#a5d6a7 100%); }
-        .topbar { display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap; padding:12px 30px; background:var(--glass); border-bottom:1px solid var(--border); }
-        .brand { color:#1a5c3a; font-size:19px; font-weight:800; text-decoration:none; }
-        nav { display:flex; gap:8px; }
-        nav a,.user { color:var(--steel); text-decoration:none; font-weight:600; }
-        nav a { padding:8px 14px; border-radius:9px; }
-        nav a.active { background:var(--primary); color:white; }
-        .user { font-size:12px; }
-        main { max-width:1600px; margin:auto; padding:26px 30px 50px; }
+        :root { --primary: #217346; --primary-dark: #1a5c3a; --dark: #1a2332; --text-dark: #0d1a2b; --steel: #6b7a8f; --glass: rgba(255,255,255,.15); --border: rgba(255,255,255,.3); --bad: #dc3545; --good: #28a745; --shadow: 0 8px 32px rgba(0,0,0,.08); }
+        body { margin: 0; min-height: 100vh; color: var(--dark); font: 14px 'Inter', sans-serif; background: linear-gradient(135deg,#e8f5e9 0%,#c8e6c9 50%,#a5d6a7 100%); position:relative; }
+        .bg-shapes { position:fixed; inset:0; overflow:hidden; z-index:0; pointer-events:none; }
+        .shape { position:absolute; border-radius:50%; opacity:.08; animation:float 25s infinite ease-in-out; background:var(--primary); }
+        .shape-1 { width:500px; height:500px; top:-150px; right:-150px; }
+        .shape-2 { width:300px; height:300px; bottom:-100px; left:-100px; animation-delay:-8s; }
+        .shape-3 { width:200px; height:200px; top:50%; left:50%; transform:translate(-50%,-50%); animation-delay:-15s; }
+        @keyframes float { 0%,100% { transform:translate(0,0) scale(1); } 25% { transform:translate(60px,-60px) scale(1.1); } 50% { transform:translate(-40px,40px) scale(.9); } 75% { transform:translate(30px,30px) scale(1.05); } }
+        .topbar { position:relative; z-index:10; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 30px; background:var(--glass); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); border-bottom:1px solid var(--border); box-shadow:0 4px 20px rgba(0,0,0,.05); }
+        .logo-mark { display:flex; align-items:center; gap:12px; text-decoration:none; }
+        .logo-icon { width:40px; height:40px; object-fit:cover; border-radius:10px; }
+        .logo-text { color:#111; font:900 23px "Times New Roman", Times, serif; letter-spacing:.4px; }
+        nav { display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
+        nav a { color:var(--steel); text-decoration:none; font-size:14px; font-weight:600; padding:7px 16px; border-radius:10px; transition:all .2s; }
+        nav a:hover { color:var(--primary); background:rgba(33,115,70,.08); }
+        nav a.active { background:var(--primary); color:#fff; box-shadow:0 4px 15px rgba(33,115,70,.3); }
+        .right { display:flex; align-items:center; gap:12px; flex-wrap:wrap; color:var(--steel); font-size:13px; }
+        .live-chip { display:flex; align-items:center; gap:6px; padding:4px 12px; border-radius:20px; background:rgba(33,115,70,.1); color:var(--primary); font-size:12px; font-weight:600; }
+        .live-dot { width:6px; height:6px; border-radius:50%; background:var(--good); animation:blink 1.5s infinite; }
+        @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:.3; } }
+        .date-display,.user-name { color:var(--text-dark); font-weight:600; }
+        .admin-badge { padding:2px 8px; border-radius:10px; background:var(--primary); color:white; font-size:9px; font-weight:600; }
+        .logout { padding:5px 14px; border-radius:8px; background:rgba(255,255,255,.5); color:var(--steel); text-decoration:none; font-size:13px; font-weight:600; }
+        .logout:hover { background:rgba(220,53,69,.1); color:var(--bad); }
+        main { position:relative; z-index:1; max-width:1600px; margin:auto; padding:26px 30px 50px; }
         .heading { margin-bottom:18px; }
         h1 { margin:0 0 5px; font-size:23px; }
         .muted { color:var(--steel); }
-        .filters { display:flex; align-items:end; gap:12px; flex-wrap:wrap; padding:16px; margin-bottom:20px; border:1px solid var(--border); border-radius:14px; background:var(--glass); }
+        .filters { display:flex; align-items:end; gap:12px; flex-wrap:wrap; padding:16px 20px; margin-bottom:20px; border:1px solid var(--border); border-radius:16px; background:var(--glass); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); box-shadow:var(--shadow); }
         .field { display:grid; gap:5px; color:var(--steel); font-size:12px; font-weight:600; }
-        input,select,button,.button { min-height:38px; padding:8px 12px; border:1px solid var(--border); border-radius:8px; background:rgba(255,255,255,.72); color:var(--dark); font:600 13px Inter,sans-serif; }
+        input,select,button,.button { min-height:38px; padding:8px 12px; border:1px solid var(--border); border-radius:8px; background:rgba(255,255,255,.72); color:var(--dark); font:600 13px 'Inter',sans-serif; }
         button,.button { display:inline-flex; align-items:center; justify-content:center; cursor:pointer; text-decoration:none; }
         .primary { background:var(--primary); color:#fff; border-color:var(--primary); }
-        .month-card { margin:22px 0; overflow:hidden; border:1px solid var(--border); border-radius:14px; background:var(--glass); box-shadow:0 6px 24px rgba(0,0,0,.07); }
+        .month-card { margin:22px 0; overflow:hidden; border:1px solid var(--border); border-radius:16px; background:var(--glass); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); box-shadow:var(--shadow); }
         .month-title { padding:14px 18px; border-bottom:2px solid var(--primary); font-size:17px; font-weight:800; }
         .table-scroll { overflow:auto; max-height:72vh; }
         table { border-collapse:collapse; min-width:100%; width:max-content; font-size:11px; }
@@ -236,10 +251,11 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         .total-row td { background:rgba(33,115,70,.17); font-weight:800; }
         .negative { color:var(--bad); }
         .empty { padding:28px; text-align:center; color:var(--steel); }
-        @media print { .topbar,.filters { display:none; } main { max-width:none; padding:0; } .table-scroll { max-height:none; overflow:visible; } .month-card { break-inside:avoid; } }
+        @media print { .topbar,.filters,.bg-shapes { display:none; } main { max-width:none; padding:0; } .table-scroll { max-height:none; overflow:visible; } .month-card { break-inside:avoid; } }
         @media (max-width:720px) {
             .topbar { justify-content:center; padding:12px 16px; }
             nav { flex-wrap:wrap; justify-content:center; }
+            .right { justify-content:center; }
             main { padding:20px 14px 36px; }
             .filters { align-items:stretch; }
             .field { flex:1 1 100%; }
@@ -251,14 +267,33 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
     </style>
 </head>
 <body>
+    <div class="bg-shapes">
+        <div class="shape shape-1"></div>
+        <div class="shape shape-2"></div>
+        <div class="shape shape-3"></div>
+    </div>
     <header class="topbar">
-        <a class="brand" href="dashboard.php">HAMEEDIA</a>
+        <a href="dashboard.php" class="logo-mark">
+            <img src="assets/images/logo.png" alt="Hameedia" class="logo-icon">
+            <span class="logo-text">HAMEEDIA</span>
+        </a>
         <nav>
             <a href="dashboard.php">Dashboard</a>
             <a class="active" href="reports.php">Reports</a>
             <a href="analytics.php">Analytics</a>
+            <?php if (isAdmin()): ?>
+            <a href="users.php">Users</a>
+            <?php endif; ?>
         </nav>
-        <span class="user"><?php echo htmlspecialchars($current_user); ?></span>
+        <div class="right">
+            <span class="live-chip"><span class="live-dot"></span><span id="live-clock"><?php echo date('g:i A'); ?></span></span>
+            <span class="date-display"><?php echo date('M d, Y'); ?></span>
+            <span class="user-name"><?php echo htmlspecialchars($current_user); ?></span>
+            <?php if (isAdmin()): ?>
+            <span class="admin-badge">Admin</span>
+            <?php endif; ?>
+            <a href="logout.php" class="logout">Sign out</a>
+        </div>
     </header>
     <main>
         <div class="heading">
@@ -397,6 +432,13 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
         <?php endforeach; ?>
     </main>
     <script>
+        function updateLiveClock() {
+            var now = new Date();
+            document.getElementById('live-clock').textContent = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        }
+        updateLiveClock();
+        setInterval(updateLiveClock, 60000);
+
         function localToday() {
             var now = new Date();
             return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');

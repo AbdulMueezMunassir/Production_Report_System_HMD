@@ -1,9 +1,5 @@
 <?php
 // analytics.php - Kiosk Mode Analytics (Continuous scroll, stacked screens)
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
-
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/functions.php';
@@ -1499,19 +1495,9 @@ $chart_labels = range(1, $work_hours);
         <?php endif; ?>
     </script>
     <script>
-// Silent auto-refresh every 15 minutes — paused while user interacts
-let refreshTimer = setTimeout(function() {
-    window.location.reload();
-}, 900000);
-
-['mousedown', 'wheel', 'touchstart', 'keydown'].forEach(evt => {
-    window.addEventListener(evt, () => {
-        clearTimeout(refreshTimer);
-        refreshTimer = setTimeout(function() {
+        setTimeout(function() {
             window.location.reload();
-        }, 900000);
-    }, { passive: true });
-});
-</script>
+        }, 3600000);
+    </script>
 </body>
 </html>

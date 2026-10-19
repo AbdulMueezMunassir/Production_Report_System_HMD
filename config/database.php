@@ -23,6 +23,7 @@ function getDBConnection() {
 }
 
 if (session_status() === PHP_SESSION_NONE) {
+    ini_set('session.gc_maxlifetime', '7200');
     session_start();
 }
 ?>
