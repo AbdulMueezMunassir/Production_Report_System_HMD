@@ -1,7 +1,6 @@
 -- install.sql - Complete database setup
--- Create database if not exists
-CREATE DATABASE IF NOT EXISTS production_db;
-USE production_db;
+-- Create the database in your hosting control panel/phpMyAdmin and select it
+-- before importing this file. Hosting database names may have account prefixes.
 
 -- Users table
 CREATE TABLE IF NOT EXISTS users (
@@ -97,8 +96,8 @@ INSERT INTO components (division_id, name, display_order) VALUES
 CREATE TABLE IF NOT EXISTS production_reports (
     id INT PRIMARY KEY AUTO_INCREMENT,
     report_date DATE NOT NULL,
-    division_id INT,
-    component_id INT,
+    devition_id INT NOT NULL,
+    unit_id INT NOT NULL,
     ttl_sam_pc DECIMAL(10,2) DEFAULT 0,
     unit_smv DECIMAL(10,2) DEFAULT 0,
     day_forecast DECIMAL(10,2) DEFAULT 0,
@@ -124,11 +123,13 @@ CREATE TABLE IF NOT EXISTS production_reports (
     hour_11 DECIMAL(10,2) DEFAULT 0,
     day_total DECIMAL(10,2) DEFAULT 0,
     acvd_eff DECIMAL(5,2) DEFAULT 0,
+    ern_minutes DECIMAL(10,2) DEFAULT 0,
+    epm DECIMAL(10,2) DEFAULT 13.20,
+    style_epm DECIMAL(10,2) DEFAULT 13.20,
+    profit DECIMAL(12,2) DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_date (report_date),
-    INDEX idx_division (division_id),
-    INDEX idx_component (component_id),
-    FOREIGN KEY (division_id) REFERENCES divisions(id),
-    FOREIGN KEY (component_id) REFERENCES components(id)
+    INDEX idx_division (devition_id),
+    INDEX idx_component (unit_id)
 );

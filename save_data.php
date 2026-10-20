@@ -15,7 +15,17 @@ if (!isLoggedIn()) {
     exit;
 }
 
-$conn = getDB();
+try {
+    $conn = getDB();
+} catch (Throwable $e) {
+    error_log('Save endpoint database connection failed: ' . $e->getMessage());
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Database unavailable. Check the hosting database configuration and PHP error log.'
+    ]);
+    exit;
+}
 $action = $_POST['action'] ?? '';
 $date = $_POST['date'] ?? date('Y-m-d');
 $division_id = (int)($_POST['division'] ?? 0);
@@ -302,18 +312,26 @@ try {
                     $response['message'] = 'Database save failed.';
                 }
             } catch (Exception $e) {
-                $response['message'] = 'Database error: ' . $e->getMessage();
+                $response['message'] = 'Database save failed. Check the installed database schema and PHP error log.';
                 error_log('Save error: ' . $e->getMessage());
+                http_response_code(500);
             }
         } else {
             $response['message'] = 'Invalid data format';
+            http_response_code(400);
         }
     } else {
         $response['message'] = 'Invalid action or missing data';
+        http_response_code(400);
     }
 } catch (Exception $e) {
-    $response['message'] = 'Error: ' . $e->getMessage();
+    $response['message'] = 'Save failed. Check the PHP error log.';
     error_log('Save error: ' . $e->getMessage());
+    http_response_code(500);
+}
+
+if (!$response['success'] && http_response_code() === 200) {
+    http_response_code(400);
 }
 
 echo json_encode($response);

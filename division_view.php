@@ -1160,6 +1160,13 @@ if ($is_assembly_division) {
             }, 200);
         }
 
+        function handleSaveError(xhr, fallbackMessage) {
+            hideSavingIndicator();
+            var response = xhr && xhr.responseJSON ? xhr.responseJSON : null;
+            var message = response && response.message ? response.message : fallbackMessage;
+            showNotification(message || 'Could not save this value. Check the connection and try again.', 'error');
+        }
+
         // ============================================================
         // sumComponentProfits() - EXCLUDES assembly rows
         // ============================================================
@@ -1256,8 +1263,16 @@ if ($is_assembly_division) {
                         is_assembly: '0'
                     },
                     dataType: 'json',
-                    success: function() { hideSavingIndicator(); },
-                    error: function() { hideSavingIndicator(); }
+                    success: function(response) {
+                        if (!response || !response.success) {
+                            handleSaveError(null, response && response.message);
+                            return;
+                        }
+                        hideSavingIndicator();
+                    },
+                    error: function(xhr) {
+                        handleSaveError(xhr, 'Could not save Match Out data. Check the database configuration.');
+                    }
                 });
             });
             
@@ -1444,11 +1459,15 @@ if ($is_assembly_division) {
                         is_assembly: isAssembly ? '1' : '0'
                     },
                     dataType: 'json',
-                    success: function() {
+                    success: function(response) {
+                        if (!response || !response.success) {
+                            handleSaveError(null, response && response.message);
+                            return;
+                        }
                         hideSavingIndicator();
                     },
-                    error: function() {
-                        hideSavingIndicator();
+                    error: function(xhr) {
+                        handleSaveError(xhr, 'Could not save this value. Check the database configuration.');
                     }
                 });
             });
@@ -1525,6 +1544,12 @@ if ($is_assembly_division) {
                     is_assembly: '1'
                 },
                 dataType: 'json'
+            }).done(function(response) {
+                if (!response || !response.success) {
+                    handleSaveError(null, response && response.message);
+                }
+            }).fail(function(xhr) {
+                handleSaveError(xhr, 'Could not save Assembly DHU data. Check the database configuration.');
             });
         });
 
@@ -1559,6 +1584,12 @@ if ($is_assembly_division) {
                     is_assembly: '<?php echo $is_assembly_division ? "1" : "0"; ?>'
                 },
                 dataType: 'json'
+            }).done(function(response) {
+                if (!response || !response.success) {
+                    handleSaveError(null, response && response.message);
+                }
+            }).fail(function(xhr) {
+                handleSaveError(xhr, 'Could not save DHU data. Check the database configuration.');
             });
         });
 
@@ -1892,7 +1923,7 @@ if ($is_assembly_division) {
                     fontFamily: 'Inter, sans-serif', fontSize: '14px', fontWeight: '600',
                     maxWidth: '350px'
                 })
-                .html(message).appendTo('body');
+                .text(message).appendTo('body');
             setTimeout(function() { 
                 notification.fadeOut(500, function() { $(this).remove(); }); 
             }, 2000);

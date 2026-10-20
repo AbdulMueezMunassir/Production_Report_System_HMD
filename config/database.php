@@ -1,9 +1,32 @@
 <?php
 // config/database.php - PDO Connection
-define('DB_HOST', 'localhost');
-define('DB_USER', 'root');
-define('DB_PASS', '');
-define('DB_NAME', 'production_db');
+$local_config_path = __DIR__ . '/database.local.php';
+$local_config = [];
+if (is_file($local_config_path)) {
+    $loaded_config = require $local_config_path;
+    if (!is_array($loaded_config)) {
+        throw new RuntimeException('config/database.local.php must return an array.');
+    }
+    $local_config = $loaded_config;
+}
+
+$database_setting = static function ($environment_name, $config_key, $default) use ($local_config) {
+    $environment_value = getenv($environment_name);
+    $value = ($environment_value !== false && $environment_value !== '')
+        ? $environment_value
+        : ($local_config[$config_key] ?? $default);
+
+    if (!is_scalar($value)) {
+        throw new RuntimeException('Invalid database configuration value for ' . $config_key . '.');
+    }
+
+    return (string)$value;
+};
+
+define('DB_HOST', $database_setting('DB_HOST', 'host', 'localhost'));
+define('DB_USER', $database_setting('DB_USER', 'user', 'root'));
+define('DB_PASS', $database_setting('DB_PASS', 'pass', ''));
+define('DB_NAME', $database_setting('DB_NAME', 'name', 'production_db'));
 
 function getDB() {
     try {
@@ -13,7 +36,12 @@ function getDB() {
         $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
         return $pdo;
     } catch (PDOException $e) {
-        die("Database connection error: " . $e->getMessage());
+        error_log('Database connection failed: ' . $e->getMessage());
+        throw new RuntimeException(
+            'Database connection failed. Verify DB_HOST, DB_NAME, DB_USER, and DB_PASS.',
+            0,
+            $e
+        );
     }
 }
 
