@@ -1103,10 +1103,17 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
             window.location.href = 'export_view_report_csv.php?date=' + encodeURIComponent(date) + '&division=' + encodeURIComponent(division) + '&hours=' + encodeURIComponent(hours);
         }
     </script>
-    <script>
-        setTimeout(function() {
-            window.location.reload();
-        }, 3600000);
+        <script>
+        // Hourly refresh - but NEVER while someone is typing in a field
+        (function safeHourlyReload() {
+            function tryReload() {
+                var a = document.activeElement;
+                var typing = a && (a.tagName === 'INPUT' || a.tagName === 'SELECT' || a.tagName === 'TEXTAREA');
+                if (typing) { setTimeout(tryReload, 60000); return; }
+                window.location.reload();
+            }
+            setTimeout(tryReload, 3600000);
+        })();
     </script>
 </body>
 </html>

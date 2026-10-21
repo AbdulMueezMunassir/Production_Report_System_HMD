@@ -69,7 +69,7 @@ if ($is_assembly_division) {
     try {
         $shirt_components = dedupeComponentRows(getComponents($conn, 1));
         $shirt_match_out = calculateMatchOutFixed($conn, 1, $date, $work_hours, $shirt_components);
-        $shirt_match_out_carder = (int)($shirt_match_out['unit_carder'] ?? 0);
+        $shirt_match_out_carder = (int)($shirt_match_out['direct_present'] ?? 0);
         $shirt_match_out_smv = (float)($shirt_match_out['unit_smv'] ?? 0);
     } catch (Exception $e) {
         $shirt_match_out = []; $shirt_match_out_carder = 0; $shirt_match_out_smv = 0;
@@ -78,7 +78,7 @@ if ($is_assembly_division) {
     try {
         $trouser_components = dedupeComponentRows(getComponents($conn, 2));
         $trouser_match_out = calculateMatchOutFixed($conn, 2, $date, $work_hours, $trouser_components);
-        $trouser_match_out_carder = (int)($trouser_match_out['unit_carder'] ?? 0);
+        $trouser_match_out_carder = (int)($trouser_match_out['direct_present'] ?? 0);
         $trouser_match_out_smv = (float)($trouser_match_out['unit_smv'] ?? 0);
     } catch (Exception $e) {
         $trouser_match_out = []; $trouser_match_out_carder = 0; $trouser_match_out_smv = 0;
@@ -95,6 +95,7 @@ foreach ($components as $comp) {
     $data['ttl_sam_pc'] = (float)($data['ttl_sam_pc'] ?? 0);
     $data['unit_smv'] = (float)($data['unit_smv'] ?? 0);
     $data['unit_carder'] = (int)($data['unit_carder'] ?? 0);
+    $data['direct_present'] = (int)($data['direct_present'] ?? 0);
     $data['plan_hours'] = (float)($data['plan_hours'] ?? 0);
     $data['worked_hours'] = (float)($data['worked_hours'] ?? $work_hours);
     $data['day_forecast'] = (float)($data['day_forecast'] ?? 0);
@@ -179,16 +180,19 @@ foreach ($components as $comp) {
         $data['profit'] = ($profit_multiplier * $data['day_total']) - (7365 * $total_assemble_carder);
         
     } else {
+        $calculation_carder = $is_direct_staffing_division
+            ? $data['direct_present']
+            : $data['unit_carder'];
         // SHIRT/TROUSER/COAT (90% target)
-        if ($data['unit_smv'] > 0 && $data['unit_carder'] > 0) {
-            $data['day_forecast'] = ($data['unit_carder'] * 600 / $data['unit_smv']) * 0.90;
+        if ($data['unit_smv'] > 0 && $calculation_carder > 0) {
+            $data['day_forecast'] = ($calculation_carder * 600 / $data['unit_smv']) * 0.90;
         } else {
             $data['day_forecast'] = 0;
         }
-        $data['available_minutes'] = $data['unit_carder'] * $data['plan_hours'] * 60;
+        $data['available_minutes'] = $calculation_carder * $data['plan_hours'] * 60;
         $data['plan_minutes'] = $data['day_forecast'] * $data['unit_smv'];
         $data['plan_eff'] = ($data['available_minutes'] > 0) ? ($data['plan_minutes'] / $data['available_minutes']) : 0;
-        $data['target_100'] = ($data['unit_smv'] > 0) ? ($data['unit_carder'] / $data['unit_smv']) * 60 : 0;
+        $data['target_100'] = ($data['unit_smv'] > 0) ? ($calculation_carder / $data['unit_smv']) * 60 : 0;
         
         $day_total = 0;
         for ($h = 1; $h <= $work_hours; $h++) {
@@ -204,9 +208,9 @@ foreach ($components as $comp) {
         $data['acvd_eff'] = ($denominator > 0) ? ($data['ern_minutes'] / $denominator) : 0;
         
         if ($data['plan_hours'] > 0) {
-            $data['profit'] = ($data['epm'] * ($data['day_total'] * $data['unit_smv'])) - (7365 * $data['unit_carder']) * ($data['worked_hours'] / $data['plan_hours']);
+            $data['profit'] = ($data['epm'] * ($data['day_total'] * $data['unit_smv'])) - (7365 * $calculation_carder) * ($data['worked_hours'] / $data['plan_hours']);
         } else {
-            $data['profit'] = ($data['epm'] * ($data['day_total'] * $data['unit_smv'])) - (7365 * $data['unit_carder']);
+            $data['profit'] = ($data['epm'] * ($data['day_total'] * $data['unit_smv'])) - (7365 * $calculation_carder);
         }
     }
     
@@ -627,11 +631,11 @@ if ($is_assembly_division) {
                         <th style="min-width:55px;">Unit</th>
                         <th style="min-width:65px;">TTl SAM/Pcs</th>
                         <th style="min-width:65px;"><?php echo $is_assembly_division ? 'Section SAM/Pc' : 'Unit SMV'; ?></th>
-                        <th style="min-width:65px;"><?php echo $is_assembly_division ? 'Assemble Carder' : 'Unit Carder'; ?></th>
                         <?php if ($is_direct_staffing_division): ?>
-                        <th style="min-width:80px;">Direct On Roll</th>
                         <th style="min-width:80px;">Direct Present</th>
+                        <th style="min-width:80px;">Direct On Roll</th>
                         <?php endif; ?>
+                        <th style="min-width:65px;"><?php echo $is_assembly_division ? 'Assemble Carder' : 'Unit Carder'; ?></th>
                         <?php if ($is_assembly_division): ?>
                         <th style="min-width:75px;">Total Assemble Carder</th>
                         <?php endif; ?>
@@ -702,11 +706,11 @@ if ($is_assembly_division) {
                                    value="<?php echo number_format($data['unit_smv'] ?? 0, 2, '.', ''); ?>"
                                    <?php echo $is_readonly_smv ? 'readonly' : ''; ?>>
                         </td>
-                        <td class="editable-yellow"><input type="number" class="field-input" data-field="unit_carder" value="<?php echo $data['unit_carder'] ?? 0; ?>"></td>
                         <?php if ($is_direct_staffing_division): ?>
-                        <td class="editable-yellow"><input type="number" min="0" step="1" class="field-input" data-field="direct_on_roll" value="<?php echo $data['direct_on_roll'] ?? 0; ?>"></td>
                         <td class="editable-yellow"><input type="number" min="0" step="1" class="field-input" data-field="direct_present" value="<?php echo $data['direct_present'] ?? 0; ?>"></td>
+                        <td class="editable-yellow"><input type="number" min="0" step="1" class="field-input" data-field="direct_on_roll" value="<?php echo $data['direct_on_roll'] ?? 0; ?>"></td>
                         <?php endif; ?>
+                        <td class="editable-yellow"><input type="number" class="field-input" data-field="unit_carder" value="<?php echo $data['unit_carder'] ?? 0; ?>"></td>
                         <?php if ($is_assembly_division): ?>
                         <td class="calculated total-carder-col total-assemble-carder"><?php echo $total_assemble_carder; ?></td>
                         <?php endif; ?>
@@ -847,10 +851,13 @@ if ($is_assembly_division) {
                         }
                         $mo_unit_smv = (float)($match_out['unit_smv'] ?? 0);
                         $mo_unit_carder = (int)($match_out['unit_carder'] ?? 0);
+                        $mo_direct_present = (int)($match_out['direct_present'] ?? 0);
+                        $mo_direct_on_roll = (int)($match_out['direct_on_roll'] ?? 0);
+                        $mo_calculation_carder = $is_direct_staffing_division ? $mo_direct_present : $mo_unit_carder;
                         $mo_plan_hours = (float)($match_out['plan_hours'] ?? 0);
                         $mo_worked_hours = (float)($match_out['worked_hours'] ?? 0);
                         $mo_ern_minutes = $mo_total * $mo_unit_smv;
-                        $mo_available_minutes = $mo_unit_carder * $mo_plan_hours * 60;
+                        $mo_available_minutes = $mo_calculation_carder * $mo_plan_hours * 60;
                         
                         $mo_denominator = 1;
                         if ($mo_available_minutes > 0 && $mo_plan_hours > 0) {
@@ -868,12 +875,15 @@ if ($is_assembly_division) {
                         }
                         $mo_profit = $match_out_summed_profit;
                     ?>
-                    <tr class="match-out-row" id="matchOutRow" data-component="999" data-isassembly="0" data-compname="MATCH OUT">
+                    <tr class="match-out-row" id="matchOutRow" data-component="999" data-isassembly="0" data-compname="MATCH OUT" data-direct-present="<?php echo $mo_direct_present; ?>">
                         <td colspan="2" style="font-weight:700;">Match Out</td>
                         <td style="font-weight:700;" id="mo-ttl-sam"><?php echo number_format($match_out['ttl_sam'] ?? 0, 4); ?></td>
                         <td style="font-weight:700;" id="mo-unit-smv"><?php echo number_format($mo_unit_smv, 2); ?></td>
+                        <?php if ($is_direct_staffing_division): ?>
+                        <td style="font-weight:700;" id="mo-direct-present"><?php echo $mo_direct_present; ?></td>
+                        <td style="font-weight:700;" id="mo-direct-on-roll"><?php echo $mo_direct_on_roll; ?></td>
+                        <?php endif; ?>
                         <td style="font-weight:700;" id="mo-unit-carder"><?php echo $mo_unit_carder; ?></td>
-                        <?php if ($is_direct_staffing_division): ?><td>—</td><td>—</td><?php endif; ?>
                         <td style="font-weight:700;" id="mo-plan-hours"><?php echo number_format($mo_plan_hours, 1); ?></td>
                         <td style="font-weight:700;" id="mo-worked-hours"><?php echo number_format($mo_worked_hours, 1); ?></td>
                         <td class="calculated" id="mo-available-minutes"><?php echo number_format($mo_available_minutes, 0); ?></td>
@@ -928,8 +938,8 @@ if ($is_assembly_division) {
                             <td>SHIRT</td>
                             <td class="editable-yellow"><input type="number" step="0.01" class="field-input" data-field="ttl_sam_pc" value="<?php echo $data['ttl_sam_pc'] ?? 0; ?>"></td>
                             <td class="readonly-cell"><input type="number" step="0.01" class="field-input readonly-smv" data-field="unit_smv" value="<?php echo number_format($data['unit_smv'] ?? 0, 2, '.', ''); ?>" readonly></td>
-                            <td class="editable-yellow"><input type="number" class="field-input" data-field="unit_carder" value="<?php echo $data['unit_carder'] ?? 0; ?>"></td>
                             <?php if ($is_direct_staffing_division): ?><td>—</td><td>—</td><?php endif; ?>
+                            <td class="editable-yellow"><input type="number" class="field-input" data-field="unit_carder" value="<?php echo $data['unit_carder'] ?? 0; ?>"></td>
                             <td class="calculated avail-minutes"><?php echo number_format($data['available_minutes'] ?? 0, 0); ?></td>
                             <td class="calculated target-100" style="font-weight:700;"><?php echo number_format($data['target_100'] ?? 0, 0); ?></td>
                             <?php for ($h = 1; $h <= $work_hours; $h++): ?>
@@ -955,8 +965,8 @@ if ($is_assembly_division) {
                             <td>SHIRT MTM</td>
                             <td class="editable-yellow"><input type="number" step="0.01" class="field-input" data-field="ttl_sam_pc" value="<?php echo $data['ttl_sam_pc'] ?? 0; ?>"></td>
                             <td class="editable-yellow"><input type="number" step="0.01" class="field-input" data-field="unit_smv" value="<?php echo number_format($data['unit_smv'] ?? 0, 2, '.', ''); ?>"></td>
-                            <td class="editable-yellow"><input type="number" class="field-input" data-field="unit_carder" value="<?php echo $data['unit_carder'] ?? 0; ?>"></td>
                             <?php if ($is_direct_staffing_division): ?><td>—</td><td>—</td><?php endif; ?>
+                            <td class="editable-yellow"><input type="number" class="field-input" data-field="unit_carder" value="<?php echo $data['unit_carder'] ?? 0; ?>"></td>
                             <td class="calculated avail-minutes"><?php echo number_format($data['available_minutes'] ?? 0, 0); ?></td>
                             <td class="calculated target-100" style="font-weight:700;"><?php echo number_format($data['target_100'] ?? 0, 0); ?></td>
                             <?php for ($h = 1; $h <= $work_hours; $h++): ?>
@@ -989,8 +999,8 @@ if ($is_assembly_division) {
                             <td>TROUSER</td>
                             <td class="editable-yellow"><input type="number" step="0.01" class="field-input" data-field="ttl_sam_pc" value="<?php echo $data['ttl_sam_pc'] ?? 0; ?>"></td>
                             <td class="readonly-cell"><input type="number" step="0.01" class="field-input readonly-smv" data-field="unit_smv" value="<?php echo number_format($data['unit_smv'] ?? 0, 2, '.', ''); ?>" readonly></td>
-                            <td class="editable-yellow"><input type="number" class="field-input" data-field="unit_carder" value="<?php echo $data['unit_carder'] ?? 0; ?>"></td>
                             <?php if ($is_direct_staffing_division): ?><td>—</td><td>—</td><?php endif; ?>
+                            <td class="editable-yellow"><input type="number" class="field-input" data-field="unit_carder" value="<?php echo $data['unit_carder'] ?? 0; ?>"></td>
                             <td class="calculated avail-minutes"><?php echo number_format($data['available_minutes'] ?? 0, 0); ?></td>
                             <td class="calculated target-100" style="font-weight:700;"><?php echo number_format($data['target_100'] ?? 0, 0); ?></td>
                             <?php for ($h = 1; $h <= $work_hours; $h++): ?>
@@ -1016,8 +1026,8 @@ if ($is_assembly_division) {
                             <td>TROUSER MTM</td>
                             <td class="editable-yellow"><input type="number" step="0.01" class="field-input" data-field="ttl_sam_pc" value="<?php echo $data['ttl_sam_pc'] ?? 0; ?>"></td>
                             <td class="editable-yellow"><input type="number" step="0.01" class="field-input" data-field="unit_smv" value="<?php echo number_format($data['unit_smv'] ?? 0, 2, '.', ''); ?>"></td>
-                            <td class="editable-yellow"><input type="number" class="field-input" data-field="unit_carder" value="<?php echo $data['unit_carder'] ?? 0; ?>"></td>
                             <?php if ($is_direct_staffing_division): ?><td>—</td><td>—</td><?php endif; ?>
+                            <td class="editable-yellow"><input type="number" class="field-input" data-field="unit_carder" value="<?php echo $data['unit_carder'] ?? 0; ?>"></td>
                             <td class="calculated avail-minutes"><?php echo number_format($data['available_minutes'] ?? 0, 0); ?></td>
                             <td class="calculated target-100" style="font-weight:700;"><?php echo number_format($data['target_100'] ?? 0, 0); ?></td>
                             <?php for ($h = 1; $h <= $work_hours; $h++): ?>
@@ -1109,8 +1119,13 @@ if ($is_assembly_division) {
             const minutes = String(now.getMinutes()).padStart(2, '0');
             document.getElementById('live-clock').textContent = hours + ':' + minutes + ' ' + ampm;
         }
-        updateClock();
+                updateClock();
         setInterval(updateClock, 60000);
+
+        // Keep-alive: ping every 5 min so the login session never expires while this page is open
+        setInterval(function() {
+            fetch('data_version.php?_=' + Date.now(), { cache: 'no-store', credentials: 'same-origin' }).catch(function() {});
+        }, 300000);
 
         function updatePage() {
             var date = document.getElementById('reportDate').value;
@@ -1213,11 +1228,13 @@ if ($is_assembly_division) {
             
             var unitSmv = parseFloat(row.find('#mo-unit-smv').text().replace(/,/g, '')) || 0;
             var unitCarder = parseFloat(row.find('#mo-unit-carder').text()) || 0;
+            var directPresent = parseInt(row.attr('data-direct-present'), 10) || 0;
+            var calculationCarder = <?php echo $is_direct_staffing_division ? 'directPresent' : 'unitCarder'; ?>;
             var planHours = parseFloat(row.find('#mo-plan-hours').text()) || 0;
             var workedHours = parseFloat(row.find('#mo-worked-hours').text()) || 0;
             
             var ernMinutes = dayTotal * unitSmv;
-            var availableMinutes = unitCarder * planHours * 60;
+            var availableMinutes = calculationCarder * planHours * 60;
             
             var denominator = 1;
             if (availableMinutes > 0 && planHours > 0) {
@@ -1299,6 +1316,8 @@ if ($is_assembly_division) {
             var ttlSamPc = parseFloat(row.find('input[data-field="ttl_sam_pc"]').val()) || 0;
             var unitSmv = parseFloat(row.find('input[data-field="unit_smv"]').val()) || 0;
             var unitCarder = parseFloat(row.find('input[data-field="unit_carder"]').val()) || 0;
+            var directPresent = parseInt(row.find('input[data-field="direct_present"]').val(), 10) || 0;
+            var directOnRoll = parseInt(row.find('input[data-field="direct_on_roll"]').val(), 10) || 0;
             var planHours = parseFloat(row.find('input[data-field="plan_hours"]').val()) || 0;
             var workedHours = parseFloat(row.find('input[data-field="worked_hours"]').val()) || hours;
             var epm = parseFloat(row.find('input[data-field="epm"]').val()) || 13.2;
@@ -1315,6 +1334,9 @@ if ($is_assembly_division) {
             var dayForecast = 0, availableMinutes = 0, planMinutes = 0, planEff = 0, target100 = 0, ernMinutes = 0, acvdEff = 0, profit = 0;
             var totalAssembleCarder = 0;
             var isShirtOrTrouser = false;
+            var calculationCarder = (!isAssembly && <?php echo $is_direct_staffing_division ? 'true' : 'false'; ?>)
+                ? directPresent
+                : unitCarder;
             
             if (isAssembly) {
                 isShirtOrTrouser = (compName === 'SHIRT' || compName === 'TROUSER');
@@ -1368,11 +1390,11 @@ if ($is_assembly_division) {
                 profit = (profitMultiplier * dayTotal) - (7365 * totalAssembleCarder);
                 
             } else {
-                if (unitSmv > 0 && unitCarder > 0) {
-                    dayForecast = (unitCarder * 600 / unitSmv) * 0.90;
-                    target100 = (unitCarder / unitSmv) * 60;
+                if (unitSmv > 0 && calculationCarder > 0) {
+                    dayForecast = (calculationCarder * 600 / unitSmv) * 0.90;
+                    target100 = (calculationCarder / unitSmv) * 60;
                 }
-                availableMinutes = unitCarder * planHours * 60;
+                availableMinutes = calculationCarder * planHours * 60;
                 planMinutes = dayForecast * unitSmv;
                 planEff = availableMinutes > 0 ? (planMinutes / availableMinutes) : 0;
                 ernMinutes = dayTotal * unitSmv;
@@ -1381,9 +1403,9 @@ if ($is_assembly_division) {
                     : 1;
                 acvdEff = denom2 > 0 ? (ernMinutes / denom2) : 0;
                 if (planHours > 0) {
-                    profit = (epm * (dayTotal * unitSmv)) - (7365 * unitCarder) * (workedHours / planHours);
+                    profit = (epm * (dayTotal * unitSmv)) - (7365 * calculationCarder) * (workedHours / planHours);
                 } else {
-                    profit = (epm * (dayTotal * unitSmv)) - (7365 * unitCarder);
+                    profit = (epm * (dayTotal * unitSmv)) - (7365 * calculationCarder);
                 }
             }
             
@@ -1406,6 +1428,8 @@ if ($is_assembly_division) {
                     ttl_sam_pc: ttlSamPc,
                     unit_smv: unitSmv,
                     unit_carder: unitCarder,
+                    direct_on_roll: directOnRoll,
+                    direct_present: directPresent,
                     plan_hours: planHours,
                     worked_hours: workedHours,
                     hourValues: hourValues,
@@ -1433,6 +1457,8 @@ if ($is_assembly_division) {
                 ttl_sam_pc: calcData.ttl_sam_pc,
                 unit_smv: calcData.unit_smv,
                 unit_carder: calcData.unit_carder,
+                direct_on_roll: calcData.direct_on_roll,
+                direct_present: calcData.direct_present,
                 plan_hours: calcData.plan_hours,
                 worked_hours: calcData.worked_hours,
                 epm: calcData.epm || 13.2,
@@ -1505,7 +1531,17 @@ if ($is_assembly_division) {
             });
         }
 
-        $(document).on('input change', '.assembly-dhu-hour-input', refreshAssemblyDhuRows);
+                $(document).on('input change', '.assembly-dhu-hour-input', refreshAssemblyDhuRows);
+
+        // DHU values: save while typing (not only on blur), so nothing is lost on refresh/tab close
+        $(document).on('input', '.assembly-dhu-hour-input', function() {
+            var el = this;
+            scheduleAutoSave('dhu_' + $(el).data('dhu-unit'), function() { $(el).trigger('change'); });
+        });
+        $(document).on('input', '#dhu-manual-input', function() {
+            var el = this;
+            scheduleAutoSave('dhu_manual', function() { $(el).trigger('change'); });
+        });
         $(function() { refreshAssemblyDhuRows(); });
 
         // ============================================================
@@ -1706,6 +1742,8 @@ if ($is_assembly_division) {
                         ttl_sam_pc: parseFloat(row.find('input[data-field="ttl_sam_pc"]').val()) || 0,
                         unit_smv: parseFloat(row.find('input[data-field="unit_smv"]').val()) || 0,
                         unit_carder: parseFloat(row.find('input[data-field="unit_carder"]').val()) || 0,
+                        direct_on_roll: parseInt(row.find('input[data-field="direct_on_roll"]').val(), 10) || 0,
+                        direct_present: parseInt(row.find('input[data-field="direct_present"]').val(), 10) || 0,
                         plan_hours: parseFloat(row.find('input[data-field="plan_hours"]').val()) || 0,
                         worked_hours: parseFloat(row.find('input[data-field="worked_hours"]').val()) || hours,
                         day_forecast: parseFloat(row.find('.day-forecast').text()) || 0,
@@ -1752,7 +1790,7 @@ if ($is_assembly_division) {
         }
 
         function calculateMatchOut(rows, hours) {
-            var result = { unitSmv: 0, unitCarder: 0, planHours: 0, workedHours: 0, dayForecast: 0, availableMinutes: 0, planMinutes: 0, planEff: 0, target100: 0, hours: {}, dayTotal: 0, ernMinutes: 0, acvdEff: 0 };
+            var result = { unitSmv: 0, unitCarder: 0, directOnRoll: 0, directPresent: 0, planHours: 0, workedHours: 0, dayForecast: 0, availableMinutes: 0, planMinutes: 0, planEff: 0, target100: 0, hours: {}, dayTotal: 0, ernMinutes: 0, acvdEff: 0 };
             var count = 0, hourSums = {}, planHoursSum = 0, workedHoursSum = 0;
             for (var h = 1; h <= hours; h++) hourSums[h] = 0;
             
@@ -1761,6 +1799,8 @@ if ($is_assembly_division) {
                     count++;
                     result.unitSmv += r.unit_smv;
                     result.unitCarder += r.unit_carder;
+                    result.directOnRoll += r.direct_on_roll || 0;
+                    result.directPresent += r.direct_present || 0;
                     planHoursSum += r.plan_hours;
                     workedHoursSum += r.worked_hours;
                     for (var h = 1; h <= hours; h++) {
@@ -1772,13 +1812,14 @@ if ($is_assembly_division) {
             if (count > 0) {
                 result.planHours = planHoursSum / count;
                 result.workedHours = workedHoursSum / count;
-                if (result.unitSmv > 0 && result.unitCarder > 0) {
-                    result.dayForecast = (result.unitCarder * 600 / result.unitSmv) * 0.90;
+                var calculationCarder = <?php echo $is_direct_staffing_division ? 'result.directPresent' : 'result.unitCarder'; ?>;
+                if (result.unitSmv > 0 && calculationCarder > 0) {
+                    result.dayForecast = (calculationCarder * 600 / result.unitSmv) * 0.90;
                 }
-                result.availableMinutes = result.unitCarder * result.planHours * 60;
+                result.availableMinutes = calculationCarder * result.planHours * 60;
                 result.planMinutes = result.dayForecast * result.unitSmv;
                 result.planEff = result.availableMinutes > 0 ? (result.planMinutes / result.availableMinutes) : 0;
-                result.target100 = result.unitSmv > 0 ? (result.unitCarder / result.unitSmv) * 60 : 0;
+                result.target100 = result.unitSmv > 0 ? (calculationCarder / result.unitSmv) * 60 : 0;
                 for (var h = 1; h <= hours; h++) {
                     result.hours[h] = Math.round(hourSums[h] / count);
                 }
@@ -1797,6 +1838,9 @@ if ($is_assembly_division) {
         function updateMatchOutRowDisplay(row, data, hours) {
             row.find('#mo-unit-smv').text(data.unitSmv.toFixed(2));
             row.find('#mo-unit-carder').text(Math.round(data.unitCarder));
+            row.attr('data-direct-present', Math.round(data.directPresent));
+            row.find('#mo-direct-present').text(Math.round(data.directPresent));
+            row.find('#mo-direct-on-roll').text(Math.round(data.directOnRoll));
             row.find('#mo-plan-hours').text(data.planHours.toFixed(1));
             row.find('#mo-worked-hours').text(data.workedHours.toFixed(1));
             row.find('#mo-available-minutes').text(Math.round(data.availableMinutes));

@@ -32,12 +32,12 @@ $trouser_match_out_carder = 0;
 try {
     $shirt_components = getComponents($conn, 1);
     $mo1 = calculateMatchOutFixed($conn, 1, $selected_date, $work_hours, $shirt_components);
-    $shirt_match_out_carder = (int)($mo1['unit_carder'] ?? 0);
+    $shirt_match_out_carder = (int)($mo1['direct_present'] ?? 0);
 } catch (Exception $e) {}
 try {
     $trouser_components = getComponents($conn, 2);
     $mo2 = calculateMatchOutFixed($conn, 2, $selected_date, $work_hours, $trouser_components);
-    $trouser_match_out_carder = (int)($mo2['unit_carder'] ?? 0);
+    $trouser_match_out_carder = (int)($mo2['direct_present'] ?? 0);
 } catch (Exception $e) {}
 
 // ============================================================
@@ -76,6 +76,9 @@ foreach ($assembly_dhu_units as $row_name => $dhu_unit_id) {
 function computeProfit($data, $division_type, $comp_name = '', $total_assemble_carder = null) {
     $day_total = (float)($data['day_total'] ?? 0);
     $unit_carder = (int)($data['unit_carder'] ?? 0);
+    $calculation_carder = in_array($division_type, ['shirt', 'trouser'], true)
+        ? (int)($data['direct_present'] ?? 0)
+        : $unit_carder;
     $unit_smv = (float)($data['unit_smv'] ?? 0);
     $plan_hours = (float)($data['plan_hours'] ?? 0);
     $worked_hours = (float)($data['worked_hours'] ?? 0);
@@ -92,8 +95,8 @@ function computeProfit($data, $division_type, $comp_name = '', $total_assemble_c
         elseif ($cu === 'KNIT') $mult = 295;
         return ($mult * $day_total) - (7365 * $tac);
     } else {
-        if ($plan_hours > 0) return ($epm * ($day_total * $unit_smv)) - (7365 * $unit_carder) * ($worked_hours / $plan_hours);
-        return ($epm * ($day_total * $unit_smv)) - (7365 * $unit_carder);
+        if ($plan_hours > 0) return ($epm * ($day_total * $unit_smv)) - (7365 * $calculation_carder) * ($worked_hours / $plan_hours);
+        return ($epm * ($day_total * $unit_smv)) - (7365 * $calculation_carder);
     }
 }
 
@@ -110,8 +113,14 @@ function getComponentByName($conn, $division_id, $date, $component_name) {
     return null;
 }
 
-function getMatchOutData($conn, $division_id, $date) {
+function getMatchOutData($conn, $division_id, $date, $work_hours = 10) {
     $mo = getReportData($conn, $division_id, 999, $date);
+    if (in_array((int)$division_id, [1, 2], true)) {
+        $components = getComponents($conn, $division_id);
+        $calculated_match_out = calculateMatchOutFixed($conn, $division_id, $date, $work_hours, $components);
+        $mo['direct_on_roll'] = (int)($calculated_match_out['direct_on_roll'] ?? 0);
+        $mo['direct_present'] = (int)($calculated_match_out['direct_present'] ?? 0);
+    }
     for ($h = 1; $h <= 11; $h++) $mo["hour_$h"] = (float)($mo["hour_$h"] ?? 0);
     return $mo;
 }
@@ -154,6 +163,9 @@ function buildColumn($name, $data, $division_type, $total_assemble_carder = null
     $unit_carder = (int)($data['unit_carder'] ?? 0);
     $direct_on_roll = (int)($data['direct_on_roll'] ?? 0);
     $direct_present = (int)($data['direct_present'] ?? 0);
+    $calculation_carder = in_array($division_type, ['shirt', 'trouser'], true)
+        ? $direct_present
+        : $unit_carder;
     $unit_smv = (float)($data['unit_smv'] ?? 0);
     $worked_hours = (float)($data['worked_hours'] ?? $work_hours);
     $ttl_sam_pc = (float)($data['ttl_sam_pc'] ?? 0);
@@ -166,13 +178,13 @@ function buildColumn($name, $data, $division_type, $total_assemble_carder = null
         $daily_available_minutes = $tac * $worked_hours * 60;
     } else {
         $ern_minutes = $day_total * $unit_smv;
-        $daily_available_minutes = $unit_carder * $worked_hours * 60;
+        $daily_available_minutes = $calculation_carder * $worked_hours * 60;
     }
     $acvd_eff = $daily_available_minutes > 0 ? ($ern_minutes / $daily_available_minutes) : 0;
     $hourly_sam = $division_type === 'assembly' ? $ttl_sam_pc : $unit_smv;
     $hourly_carder = $division_type === 'assembly'
         ? ($total_assemble_carder !== null ? $total_assemble_carder : $unit_carder)
-        : $unit_carder;
+        : $calculation_carder;
     $hourly_target = $hourly_sam > 0
         ? ($hourly_carder * 60) / $hourly_sam
         : 0;
@@ -223,7 +235,7 @@ foreach (['Front', 'Back', 'Collar', 'Sleeve', 'Cuff'] as $name) {
     $cd = getComponentByName($conn, 1, $selected_date, $name);
     $shirt_main[] = $cd ? buildColumn($name, $cd, 'shirt', null, $work_hours, $dhu_manual_value) : emptyColumn($name, 'component', $work_hours);
 }
-$mo_shirt = getMatchOutData($conn, 1, $selected_date);
+$mo_shirt = getMatchOutData($conn, 1, $selected_date, $work_hours);
 $mo_col = buildColumn('Match Out', $mo_shirt, 'shirt', null, $work_hours, $dhu_manual_value);
 $mo_col['type'] = 'match_out'; $mo_col['profit'] = 0;
 foreach ($shirt_main as $c) if ($c['type']==='component') $mo_col['profit'] += $c['profit'];
@@ -243,7 +255,7 @@ foreach (['Front', 'Back', 'Band'] as $name) {
     $cd = getComponentByName($conn, 2, $selected_date, $name);
     $trouser_main[] = $cd ? buildColumn($name, $cd, 'trouser', null, $work_hours, $dhu_manual_value) : emptyColumn($name, 'component', $work_hours);
 }
-$mo_tr = getMatchOutData($conn, 2, $selected_date);
+$mo_tr = getMatchOutData($conn, 2, $selected_date, $work_hours);
 $mo_tr_col = buildColumn('Match Out', $mo_tr, 'trouser', null, $work_hours, $dhu_manual_value);
 $mo_tr_col['type'] = 'match_out'; $mo_tr_col['profit'] = 0;
 foreach ($trouser_main as $c) if ($c['type']==='component') $mo_tr_col['profit'] += $c['profit'];
@@ -458,6 +470,16 @@ $stats_trouser_mtm = computeStats($trouser_mtm);
 $stats_coat_main = computeStats($coat_main);
 $stats_coat_mtm = computeStats($coat_mtm);
 $stats_assembly = computeStats($assembly_main);
+
+// KPI card value = TTI SAM/Pcs from the Assembly table row (e.g. 29)
+function kpiSamValue($row) {
+    $v = (float)($row['ttl_sam_pc'] ?? 0);
+    return rtrim(rtrim(number_format($v, 2, '.', ''), '0'), '.') ?: '0';
+}
+$kpi_sam_shirt_main   = kpiSamValue($asm_shirt ?? []);
+$kpi_sam_shirt_mtm    = kpiSamValue($shirt_mtm_comp ?? []);
+$kpi_sam_trouser_main = kpiSamValue($asm_tr ?? []);
+$kpi_sam_trouser_mtm  = kpiSamValue($trouser_mtm_comp ?? []);
 
 // Pre-compute assembly charts using per-hour DHU rates.
 $assembly_dhu_chart = [];
@@ -706,7 +728,7 @@ $chart_labels = range(1, $work_hours);
             
             <div class="stats-row">
                 <div class="stat-card"><div class="number"><?php echo number_format($stats_shirt_main['total_pcs']); ?></div><div class="label">Total Production</div></div>
-                <div class="stat-card"><div class="number eff"><?php echo $stats_shirt_main['avg_eff']; ?>%</div><div class="label">Avg SAM Efficiency</div></div>
+                <div class="stat-card"><div class="number eff"><?php echo $kpi_sam_shirt_main; ?></div><div class="label">Avg SAM Efficiency</div></div>
                 <div class="stat-card"><div class="number dhu"><?php echo number_format($shirt_main_dhu_eff['eff'], 1); ?>%</div><div class="label">Avg DHU</div></div>
                 <div class="stat-card"><div class="number"><?php echo $work_hours; ?></div><div class="label">Work Hours</div></div>
             </div>
@@ -779,7 +801,7 @@ $chart_labels = range(1, $work_hours);
             
             <div class="stats-row">
                 <div class="stat-card"><div class="number"><?php echo number_format($stats_shirt_mtm['total_pcs']); ?></div><div class="label">Total Production</div></div>
-                <div class="stat-card"><div class="number eff"><?php echo $stats_shirt_mtm['avg_eff']; ?>%</div><div class="label">Avg SAM Efficiency</div></div>
+                <div class="stat-card"><div class="number eff"><?php echo $kpi_sam_shirt_mtm; ?></div><div class="label">Avg SAM Efficiency</div></div>
                 <div class="stat-card"><div class="number dhu"><?php echo number_format($shirt_mtm_dhu_avg, 1); ?>%</div><div class="label">Avg DHU</div></div>
                 <div class="stat-card dhu-eff-card"><div class="number dhu"><?php echo number_format($shirt_mtm_dhu_eff['total'], 0); ?></div><div class="label">Total Defects</div></div>
                 <div class="stat-card"><div class="number"><?php echo $work_hours; ?></div><div class="label">Work Hours</div></div>
@@ -864,7 +886,7 @@ $chart_labels = range(1, $work_hours);
             
             <div class="stats-row">
                 <div class="stat-card"><div class="number"><?php echo number_format($stats_trouser_main['total_pcs']); ?></div><div class="label">Total Production</div></div>
-                <div class="stat-card"><div class="number eff"><?php echo $stats_trouser_main['avg_eff']; ?>%</div><div class="label">Avg SAM Efficiency</div></div>
+                <div class="stat-card"><div class="number eff"><?php echo $kpi_sam_trouser_main; ?></div><div class="label">Avg SAM Efficiency</div></div>
                 <div class="stat-card"><div class="number dhu"><?php echo number_format($trouser_main_dhu_eff['eff'], 1); ?>%</div><div class="label">Avg DHU</div></div>
                 <div class="stat-card"><div class="number"><?php echo $work_hours; ?></div><div class="label">Work Hours</div></div>
             </div>
@@ -934,7 +956,7 @@ $chart_labels = range(1, $work_hours);
             
             <div class="stats-row">
                 <div class="stat-card"><div class="number"><?php echo number_format($stats_trouser_mtm['total_pcs']); ?></div><div class="label">Total Production</div></div>
-                <div class="stat-card"><div class="number eff"><?php echo $stats_trouser_mtm['avg_eff']; ?>%</div><div class="label">Avg SAM Efficiency</div></div>
+                <div class="stat-card"><div class="number eff"><?php echo $kpi_sam_trouser_mtm; ?></div><div class="label">Avg SAM Efficiency</div></div>
                 <div class="stat-card"><div class="number dhu"><?php echo number_format($trouser_mtm_dhu_avg, 1); ?>%</div><div class="label">Avg DHU</div></div>
                 <div class="stat-card dhu-eff-card"><div class="number dhu"><?php echo number_format($trouser_mtm_dhu_eff['total'], 0); ?></div><div class="label">Total Defects</div></div>
                 <div class="stat-card"><div class="number"><?php echo $work_hours; ?></div><div class="label">Work Hours</div></div>
@@ -1499,10 +1521,53 @@ $chart_labels = range(1, $work_hours);
         })();
         <?php endif; ?>
     </script>
-    <script>
-        setTimeout(function() {
-            window.location.reload();
-        }, 3600000);
+        <script>
+        // LIVE UPDATE (smart screen): every 10s check data_version.php,
+        // reload silently only when data changed, and keep the scroll position.
+        (function () {
+            var PAGE_DATE  = '<?php echo $selected_date; ?>';
+            var FOLLOW_TODAY = <?php echo isset($_GET['date']) ? 'false' : 'true'; ?>;
+            var POLL_MS = 10000;
+            var lastVersion = null;
+            var KEY = 'kioskScrollY';
+
+            function safeGet() { try { return sessionStorage.getItem(KEY); } catch (e) { return null; } }
+            function safeSet(v) { try { sessionStorage.setItem(KEY, v); } catch (e) {} }
+            function safeDel() { try { sessionStorage.removeItem(KEY); } catch (e) {} }
+
+            var saved = safeGet();
+            if (saved !== null) {
+                safeDel();
+                var y = parseInt(saved, 10) || 0;
+                window.addEventListener('load', function () { window.scrollTo(0, y); });
+            }
+
+            function liveReload() {
+                safeSet(String(window.pageYOffset || 0));
+                window.location.reload();
+            }
+
+            function checkVersion() {
+                fetch('data_version.php?date=' + encodeURIComponent(PAGE_DATE) + '&_=' + Date.now(), {
+                    cache: 'no-store',
+                    credentials: 'same-origin'
+                })
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (d) {
+                    if (!d || !d.success) return;
+                    if (FOLLOW_TODAY && d.today && d.today !== PAGE_DATE) { liveReload(); return; }
+                    if (lastVersion === null) { lastVersion = d.version; return; }
+                    if (d.version !== lastVersion) { liveReload(); }
+                })
+                .catch(function () {});
+            }
+
+            checkVersion();
+            setInterval(checkVersion, POLL_MS);
+
+            // Fallback hard refresh every hour (keeps scroll position)
+            setTimeout(liveReload, 3600000);
+        })();
     </script>
 </body>
 </html>

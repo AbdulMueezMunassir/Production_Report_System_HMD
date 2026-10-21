@@ -51,7 +51,26 @@ function getDBConnection() {
 }
 
 if (session_status() === PHP_SESSION_NONE) {
-    ini_set('session.gc_maxlifetime', '7200');
+    // Stay logged in for 7 days (smart screen / refresh should never log out)
+    $session_lifetime = 60 * 60 * 24 * 7;
+
+    // Own session folder so other XAMPP apps / default cleanup don't delete our sessions
+    $session_dir = __DIR__ . '/../sessions';
+    if (!is_dir($session_dir)) {
+        @mkdir($session_dir, 0700, true);
+        @file_put_contents($session_dir . '/.htaccess', "Require all denied\n");
+    }
+    if (is_dir($session_dir) && is_writable($session_dir)) {
+        session_save_path($session_dir);
+    }
+
+    ini_set('session.gc_maxlifetime', (string)$session_lifetime);
+    session_set_cookie_params([
+        'lifetime' => $session_lifetime,
+        'path'     => '/',
+        'httponly' => true,
+        'samesite' => 'Lax'
+    ]);
     session_start();
 }
 ?>

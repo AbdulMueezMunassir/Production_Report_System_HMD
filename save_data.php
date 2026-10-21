@@ -171,17 +171,20 @@ try {
                     
                 } else {
                     // SHIRT/TROUSER/COAT FORMULAS (90% target)
-                    if ($save_data['unit_smv'] > 0 && $save_data['unit_carder'] > 0) {
-                        $save_data['day_forecast'] = ($save_data['unit_carder'] * 600 / $save_data['unit_smv']) * 0.90;
+                    $calculation_carder = $can_save_direct_staffing
+                        ? ($direct_present ?? $save_data['unit_carder'])
+                        : $save_data['unit_carder'];
+                    if ($save_data['unit_smv'] > 0 && $calculation_carder > 0) {
+                        $save_data['day_forecast'] = ($calculation_carder * 600 / $save_data['unit_smv']) * 0.90;
                     } else {
                         $save_data['day_forecast'] = 0;
                     }
-                    $save_data['available_minutes'] = $save_data['unit_carder'] * $save_data['plan_hours'] * 60;
+                    $save_data['available_minutes'] = $calculation_carder * $save_data['plan_hours'] * 60;
                     $save_data['plan_minutes'] = $save_data['day_forecast'] * $save_data['unit_smv'];
                     $save_data['plan_eff'] = ($save_data['available_minutes'] > 0) 
                         ? ($save_data['plan_minutes'] / $save_data['available_minutes']) : 0;
                     $save_data['target_100'] = ($save_data['unit_smv'] > 0) 
-                        ? ($save_data['unit_carder'] / $save_data['unit_smv']) * 60 : 0;
+                        ? ($calculation_carder / $save_data['unit_smv']) * 60 : 0;
                     
                     $day_total = 0;
                     for ($h = 1; $h <= $work_hours; $h++) {
@@ -198,10 +201,10 @@ try {
                     
                     if ($save_data['plan_hours'] > 0) {
                         $save_data['profit'] = ($save_data['epm'] * ($save_data['day_total'] * $save_data['unit_smv'])) 
-                            - (7365 * $save_data['unit_carder']) * ($save_data['worked_hours'] / $save_data['plan_hours']);
+                            - (7365 * $calculation_carder) * ($save_data['worked_hours'] / $save_data['plan_hours']);
                     } else {
                         $save_data['profit'] = ($save_data['epm'] * ($save_data['day_total'] * $save_data['unit_smv'])) 
-                            - (7365 * $save_data['unit_carder']);
+                            - (7365 * $calculation_carder);
                     }
                 }
             }

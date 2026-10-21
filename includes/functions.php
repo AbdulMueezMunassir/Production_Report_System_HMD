@@ -200,6 +200,8 @@ function calculateMatchOutFixed($conn, $division_id, $date, $work_hours, $compon
         'ttl_sam' => 0,
         'unit_smv' => 0,
         'unit_carder' => 0,
+        'direct_on_roll' => 0,
+        'direct_present' => 0,
         'plan_hours' => 0,
         'worked_hours' => 0,
         'day_forecast' => 0,
@@ -225,6 +227,8 @@ function calculateMatchOutFixed($conn, $division_id, $date, $work_hours, $compon
             $match['ttl_sam'] += (float)($data['ttl_sam_pc'] ?? 0);
             $match['unit_smv'] += (float)$data['unit_smv'];
             $match['unit_carder'] += (int)$data['unit_carder'];
+            $match['direct_on_roll'] += (int)($data['direct_on_roll'] ?? 0);
+            $match['direct_present'] += (int)($data['direct_present'] ?? 0);
             $planHoursSum += (float)$data['plan_hours'];
             $workedHoursSum += (float)$data['worked_hours'];
             for ($h = 1; $h <= $work_hours; $h++) {
@@ -237,15 +241,18 @@ function calculateMatchOutFixed($conn, $division_id, $date, $work_hours, $compon
         $match['ttl_sam'] = $match['ttl_sam'] / $count;
         $match['plan_hours'] = $planHoursSum / $count;
         $match['worked_hours'] = $workedHoursSum / $count;
+        $calculation_carder = in_array((int)$division_id, [1, 2], true)
+            ? $match['direct_present']
+            : $match['unit_carder'];
         
-        if ($match['unit_smv'] > 0 && $match['unit_carder'] > 0) {
-            $match['day_forecast'] = calcDayForecast90($match['unit_carder'], $match['unit_smv']);
+        if ($match['unit_smv'] > 0 && $calculation_carder > 0) {
+            $match['day_forecast'] = calcDayForecast90($calculation_carder, $match['unit_smv']);
         }
         
-        $match['available_minutes'] = calcAvailableMinutes($match['unit_carder'], $match['plan_hours']);
+        $match['available_minutes'] = calcAvailableMinutes($calculation_carder, $match['plan_hours']);
         $match['plan_minutes'] = calcPlanMinutes($match['day_forecast'], $match['unit_smv']);
         $match['plan_eff'] = calcPlanEff($match['plan_minutes'], $match['available_minutes']);
-        $match['target_100'] = calcTarget100($match['unit_carder'], $match['unit_smv']);
+        $match['target_100'] = calcTarget100($calculation_carder, $match['unit_smv']);
         
         for ($h = 1; $h <= $work_hours; $h++) {
             $match['hours'][$h] = round($hourSums[$h] / $count, 0);
