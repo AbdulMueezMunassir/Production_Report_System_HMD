@@ -93,10 +93,10 @@ function computeProfit($data, $division_type, $comp_name = '', $total_assemble_c
         elseif ($cu === 'COAT') $mult = 2800;
         elseif ($cu === 'COAT MTM') $mult = 3400;
         elseif ($cu === 'KNIT') $mult = 295;
-        return ($mult * $day_total) - (7365 * $tac);
+        return ($mult * $day_total) - (8408 * $tac);
     } else {
-        if ($plan_hours > 0) return ($epm * ($day_total * $unit_smv)) - (7365 * $calculation_carder) * ($worked_hours / $plan_hours);
-        return ($epm * ($day_total * $unit_smv)) - (7365 * $calculation_carder);
+        if ($plan_hours > 0) return ($epm * ($day_total * $unit_smv)) - (8408 * $calculation_carder) * ($worked_hours / $plan_hours);
+        return ($epm * ($day_total * $unit_smv)) - (8408 * $calculation_carder);
     }
 }
 

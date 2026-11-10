@@ -192,7 +192,7 @@ foreach ($components as $comp) {
         elseif ($comp_name === 'COAT MTM') $profit_multiplier = 3400;
         elseif ($comp_name === 'KNIT') $profit_multiplier = 295;
         
-        $data['profit'] = ($profit_multiplier * $data['day_total']) - (7365 * $total_assemble_carder);
+        $data['profit'] = ($profit_multiplier * $data['day_total']) - (8408 * $total_assemble_carder);
         
     } else {
         if ($data['unit_smv'] > 0 && $data['unit_carder'] > 0) {
@@ -219,9 +219,9 @@ foreach ($components as $comp) {
         $data['acvd_eff'] = ($denominator > 0) ? ($data['ern_minutes'] / $denominator) : 0;
         
         if ($data['plan_hours'] > 0) {
-            $data['profit'] = ($data['epm'] * ($data['day_total'] * $data['unit_smv'])) - (7365 * $data['unit_carder']) * ($data['worked_hours'] / $data['plan_hours']);
+            $data['profit'] = ($data['epm'] * ($data['day_total'] * $data['unit_smv'])) - (8408 * $data['unit_carder']) * ($data['worked_hours'] / $data['plan_hours']);
         } else {
-            $data['profit'] = ($data['epm'] * ($data['day_total'] * $data['unit_smv'])) - (7365 * $data['unit_carder']);
+            $data['profit'] = ($data['epm'] * ($data['day_total'] * $data['unit_smv'])) - (8408 * $data['unit_carder']);
         }
     }
     
@@ -382,7 +382,7 @@ foreach ($assembly_components as $comp) {
     elseif ($comp_name === 'COAT MTM') $profit_multiplier = 3400;
     elseif ($comp_name === 'KNIT') $profit_multiplier = 295;
     
-    $data['profit'] = ($profit_multiplier * $data['day_total']) - (7365 * $total_assemble_carder);
+    $data['profit'] = ($profit_multiplier * $data['day_total']) - (8408 * $total_assemble_carder);
     
     $assembly_all_data[$comp['name']] = $data;
 }
@@ -1002,7 +1002,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                         <td style="font-weight:700;"><?php echo round($lt['ern_minutes'] ?? 0); ?></td>
                         <td style="font-weight:700; color:var(--primary);"><?php echo round(($lt['acvd_eff'] ?? 0) * 100); ?>%</td>
                         <td>—</td>
-                        <td style="font-weight:700;"><?php echo round((500 * ($lt['day_total'] ?? 0)) - (7365 * (($lt['unit_carder'] ?? 0) + ($shirt_match_out['unit_carder'] ?? 0)))); ?></td>
+                        <td style="font-weight:700;"><?php echo round((500 * ($lt['day_total'] ?? 0)) - (8408 * (($lt['unit_carder'] ?? 0) + ($shirt_match_out['unit_carder'] ?? 0)))); ?></td>
                     </tr>
                     
                     <!-- FIX 4: Lean Total DHU row (already correct value) -->
@@ -1039,7 +1039,7 @@ $current_user = $_SESSION['full_name'] ?? $_SESSION['username'] ?? 'User';
                         <td style="font-weight:800;"><?php echo round($gt['ern_minutes'] ?? 0); ?></td>
                         <td style="font-weight:800;"><?php echo round(($gt['acvd_eff'] ?? 0) * 100); ?>%</td>
                         <td>—</td>
-                        <td style="font-weight:800;"><?php echo round((500 * ($gt['day_total'] ?? 0)) - (7365 * (($gt['unit_carder'] ?? 0) + 0))); ?></td>
+                        <td style="font-weight:800;"><?php echo round((500 * ($gt['day_total'] ?? 0)) - (8408 * (($gt['unit_carder'] ?? 0) + 0))); ?></td>
                     </tr>
                     <?php endif; ?>
                     

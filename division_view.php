@@ -177,7 +177,7 @@ foreach ($components as $comp) {
         elseif ($comp_name === 'COAT MTM') $profit_multiplier = 3400;
         elseif ($comp_name === 'KNIT') $profit_multiplier = 295;
         
-        $data['profit'] = ($profit_multiplier * $data['day_total']) - (7365 * $total_assemble_carder);
+        $data['profit'] = ($profit_multiplier * $data['day_total']) - (8408 * $total_assemble_carder);
         
     } else {
         $calculation_carder = $is_direct_staffing_division
@@ -208,9 +208,9 @@ foreach ($components as $comp) {
         $data['acvd_eff'] = ($denominator > 0) ? ($data['ern_minutes'] / $denominator) : 0;
         
         if ($data['plan_hours'] > 0) {
-            $data['profit'] = ($data['epm'] * ($data['day_total'] * $data['unit_smv'])) - (7365 * $calculation_carder) * ($data['worked_hours'] / $data['plan_hours']);
+            $data['profit'] = ($data['epm'] * ($data['day_total'] * $data['unit_smv'])) - (8408 * $calculation_carder) * ($data['worked_hours'] / $data['plan_hours']);
         } else {
-            $data['profit'] = ($data['epm'] * ($data['day_total'] * $data['unit_smv'])) - (7365 * $calculation_carder);
+            $data['profit'] = ($data['epm'] * ($data['day_total'] * $data['unit_smv'])) - (8408 * $calculation_carder);
         }
     }
     
@@ -368,7 +368,7 @@ foreach ($assembly_components as $comp) {
     elseif ($comp_name === 'COAT MTM') $profit_multiplier = 3400;
     elseif ($comp_name === 'KNIT') $profit_multiplier = 295;
     
-    $data['profit'] = ($profit_multiplier * $data['day_total']) - (7365 * $total_assemble_carder);
+    $data['profit'] = ($profit_multiplier * $data['day_total']) - (8408 * $total_assemble_carder);
     
     $assembly_all_data[$comp['name']] = $data;
 }
@@ -1066,7 +1066,7 @@ if ($is_assembly_division) {
                         <td style="font-weight:700;" id="lt-ern-minutes"><?php echo round($lean_total['ern_minutes'] ?? 0); ?></td>
                         <td style="font-weight:700; color:var(--primary);" id="lt-acvd-eff"><?php echo round(($lean_total['acvd_eff'] ?? 0) * 100); ?>%</td>
                         <td>—</td>
-                        <td style="font-weight:700;" id="lt-profit"><?php echo round((500 * ($lean_total['day_total'] ?? 0)) - (7365 * (($lean_total['assemble_carder'] ?? 0) + ($shirt_match_out['unit_carder'] ?? 0)))); ?></td>
+                        <td style="font-weight:700;" id="lt-profit"><?php echo round((500 * ($lean_total['day_total'] ?? 0)) - (8408 * (($lean_total['assemble_carder'] ?? 0) + ($shirt_match_out['unit_carder'] ?? 0)))); ?></td>
                     </tr>
                     
                 
@@ -1089,7 +1089,7 @@ if ($is_assembly_division) {
                         <td style="font-weight:800;" id="gt-ern-minutes"><?php echo round($grand_total['ern_minutes'] ?? 0); ?></td>
                         <td style="font-weight:800;" id="gt-acvd-eff"><?php echo round(($grand_total['acvd_eff'] ?? 0) * 100); ?>%</td>
                         <td>—</td>
-                        <td style="font-weight:800;" id="gt-profit"><?php echo round((500 * ($grand_total['day_total'] ?? 0)) - (7365 * (($grand_total['assemble_carder'] ?? 0) + 0))); ?></td>
+                        <td style="font-weight:800;" id="gt-profit"><?php echo round((500 * ($grand_total['day_total'] ?? 0)) - (8408 * (($grand_total['assemble_carder'] ?? 0) + 0))); ?></td>
                     </tr>
                     <?php endif; ?>
                     <?php endif; ?>
@@ -1387,7 +1387,7 @@ if ($is_assembly_division) {
                 else if (compName === 'COAT MTM') profitMultiplier = 3400;
                 else if (compName === 'KNIT') profitMultiplier = 295;
                 
-                profit = (profitMultiplier * dayTotal) - (7365 * totalAssembleCarder);
+                profit = (profitMultiplier * dayTotal) - (8408 * totalAssembleCarder);
                 
             } else {
                 if (unitSmv > 0 && calculationCarder > 0) {
@@ -1403,9 +1403,9 @@ if ($is_assembly_division) {
                     : 1;
                 acvdEff = denom2 > 0 ? (ernMinutes / denom2) : 0;
                 if (planHours > 0) {
-                    profit = (epm * (dayTotal * unitSmv)) - (7365 * calculationCarder) * (workedHours / planHours);
+                    profit = (epm * (dayTotal * unitSmv)) - (8408 * calculationCarder) * (workedHours / planHours);
                 } else {
-                    profit = (epm * (dayTotal * unitSmv)) - (7365 * calculationCarder);
+                    profit = (epm * (dayTotal * unitSmv)) - (8408 * calculationCarder);
                 }
             }
             
@@ -1901,7 +1901,7 @@ if ($is_assembly_division) {
             row.find('#lt-ern-minutes').text(rnd(data.ern_minutes));
             row.find('#lt-acvd-eff').text(rnd(data.acvd_eff * 100) + '%');
             
-            var ltProfit = (500 * data.day_total) - (7365 * (data.assemble_carder + SHIRT_MATCH_OUT_CARDER));
+            var ltProfit = (500 * data.day_total) - (8408 * (data.assemble_carder + SHIRT_MATCH_OUT_CARDER));
             row.find('#lt-profit').text(rnd(ltProfit));
             row.find('#lt-profit').css('color', ltProfit >= 0 ? '#28a745' : '#dc3545');
         }
@@ -1923,7 +1923,7 @@ if ($is_assembly_division) {
             row.find('#gt-ern-minutes').text(rnd(data.ern_minutes));
             row.find('#gt-acvd-eff').text(rnd(data.acvd_eff * 100) + '%');
             
-            var gtProfit = (500 * data.day_total) - (7365 * data.assemble_carder);
+            var gtProfit = (500 * data.day_total) - (8408 * data.assemble_carder);
             row.find('#gt-profit').text(rnd(gtProfit));
             row.find('#gt-profit').css('color', gtProfit >= 0 ? '#28a745' : '#dc3545');
         }

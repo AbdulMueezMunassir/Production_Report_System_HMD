@@ -92,10 +92,10 @@ function calcAchievedEff90($earnedMinutes, $availableMinutes, $planHours, $worke
 // PROFIT FORMULAS - SHIRT DETAIL
 // ============================================================
 function calcShirtProfit($epm, $dayTotal, $unitSmv, $unitCarder, $workedHours, $planHours) {
-    // = AD * (AA * F) - (7365 * H) * (J / I)
+    // = AD * (AA * F) - (8408 * H) * (J / I)
     // AD = EPM, AA = Day Total, F = Unit SMV, H = Unit Carder, J = Worked Hours, I = Plan Hours
     $part1 = $epm * ($dayTotal * $unitSmv);
-    $part2 = (7365 * $unitCarder) * ($workedHours / $planHours);
+    $part2 = (8408 * $unitCarder) * ($workedHours / $planHours);
     return $part1 - $part2;
 }
 
@@ -103,9 +103,9 @@ function calcShirtProfit($epm, $dayTotal, $unitSmv, $unitCarder, $workedHours, $
 // PROFIT FORMULAS - SHIRT SUMMARY (Assembly)
 // ============================================================
 function calcShirtSummaryProfit($dayTotal, $unitCarder, $matchOutCarder) {
-    // = (500 * AA) - (7365 * (H + H8))
+    // = (500 * AA) - (8408 * (H + H8))
     // AA = Day Total, H = Unit Carder, H8 = Match Out Carder
-    return (500 * $dayTotal) - (7365 * ($unitCarder + $matchOutCarder));
+    return (500 * $dayTotal) - (8408 * ($unitCarder + $matchOutCarder));
 }
 
 // ============================================================
@@ -114,7 +114,7 @@ function calcShirtSummaryProfit($dayTotal, $unitCarder, $matchOutCarder) {
 function calcTrouserProfit($epm, $dayTotal, $unitSmv, $unitCarder, $workedHours, $planHours) {
     // Same as Shirt detail
     $part1 = $epm * ($dayTotal * $unitSmv);
-    $part2 = (7365 * $unitCarder) * ($workedHours / $planHours);
+    $part2 = (8408 * $unitCarder) * ($workedHours / $planHours);
     return $part1 - $part2;
 }
 
@@ -122,33 +122,33 @@ function calcTrouserProfit($epm, $dayTotal, $unitSmv, $unitCarder, $workedHours,
 // PROFIT FORMULAS - TROUSER SUMMARY (Assembly)
 // ============================================================
 function calcTrouserSummaryProfit($dayTotal, $unitCarder, $matchOutCarder) {
-    // = (500 * AA) - (7365 * (H + H10))
+    // = (500 * AA) - (8408 * (H + H10))
     // AA = Day Total, H = Unit Carder, H10 = Match Out Carder
-    return (500 * $dayTotal) - (7365 * ($unitCarder + $matchOutCarder));
+    return (500 * $dayTotal) - (8408 * ($unitCarder + $matchOutCarder));
 }
 
 // ============================================================
 // PROFIT FORMULAS - ASSEMBLE DETAIL
 // ============================================================
 function calcAssembleProfit($dayTotal, $unitCarder, $matchOutCarder) {
-    // = (500 * AA) - (7365 * (H + H12)) or (H + H14) or (H + H16) or (H + H18)
-    return (500 * $dayTotal) - (7365 * ($unitCarder + $matchOutCarder));
+    // = (500 * AA) - (8408 * (H + H12)) or (H + H14) or (H + H16) or (H + H18)
+    return (500 * $dayTotal) - (8408 * ($unitCarder + $matchOutCarder));
 }
 
 // ============================================================
 // PROFIT FORMULAS - ASSEMBLE SUMMARY (Lean Total)
 // ============================================================
 function calcLeanTotalProfit($dayTotal, $unitCarder, $matchOutCarder) {
-    // = (500 * AA32) - (7365 * (H32 + H20))
-    return (500 * $dayTotal) - (7365 * ($unitCarder + $matchOutCarder));
+    // = (500 * AA32) - (8408 * (H32 + H20))
+    return (500 * $dayTotal) - (8408 * ($unitCarder + $matchOutCarder));
 }
 
 // ============================================================
 // PROFIT FORMULAS - FACTORY GRAND TOTAL
 // ============================================================
 function calcFactoryGrandTotalProfit($dayTotal, $unitCarder, $matchOutCarder) {
-    // = (500 * AA35) - (7365 * (H35 + H23))
-    return (500 * $dayTotal) - (7365 * ($unitCarder + $matchOutCarder));
+    // = (500 * AA35) - (8408 * (H35 + H23))
+    return (500 * $dayTotal) - (8408 * ($unitCarder + $matchOutCarder));
 }
 
 // ============================================================

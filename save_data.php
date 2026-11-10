@@ -167,7 +167,7 @@ try {
                     elseif ($comp_name_upper === 'COAT MTM') $mult = 3400;
                     elseif ($comp_name_upper === 'KNIT') $mult = 295;
                     
-                    $save_data['profit'] = ($mult * $save_data['day_total']) - (7365 * $tac);
+                    $save_data['profit'] = ($mult * $save_data['day_total']) - (8408 * $tac);
                     
                 } else {
                     // SHIRT/TROUSER/COAT FORMULAS (90% target)
@@ -201,10 +201,10 @@ try {
                     
                     if ($save_data['plan_hours'] > 0) {
                         $save_data['profit'] = ($save_data['epm'] * ($save_data['day_total'] * $save_data['unit_smv'])) 
-                            - (7365 * $calculation_carder) * ($save_data['worked_hours'] / $save_data['plan_hours']);
+                            - (8408 * $calculation_carder) * ($save_data['worked_hours'] / $save_data['plan_hours']);
                     } else {
                         $save_data['profit'] = ($save_data['epm'] * ($save_data['day_total'] * $save_data['unit_smv'])) 
-                            - (7365 * $calculation_carder);
+                            - (8408 * $calculation_carder);
                     }
                 }
             }
